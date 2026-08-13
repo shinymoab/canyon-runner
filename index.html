@@ -10,8 +10,6 @@
 <style>
   :root{
     --ink:#150e14;
-    --rock:#b5643c;
-    --rock-deep:#6e3a2a;
     --amber:#f5c45e;
     --bone:#ede6da;
     --alarm:#e2574c;
@@ -32,7 +30,6 @@
     padding:calc(var(--pad-t) + 14px) calc(var(--pad-r) + 14px) calc(var(--pad-b) + 14px) calc(var(--pad-l) + 14px)}
   .hidden{display:none !important}
 
-  /* ---- top-left telemetry ---- */
   #telemetry{position:absolute;top:calc(var(--pad-t) + 14px);left:calc(var(--pad-l) + 16px)}
   .eyebrow{font-family:var(--display);font-size:11px;letter-spacing:.32em;
     text-transform:uppercase;color:var(--amber);opacity:.85}
@@ -40,27 +37,24 @@
     text-transform:uppercase;line-height:1.05;margin-top:2px}
   #clock{font-size:13px;letter-spacing:.14em;opacity:.72;margin-top:4px}
 
-  /* ---- signature: bank & pitch ladder ---- */
   #attitude{position:absolute;top:calc(var(--pad-t) + 12px);left:50%;transform:translateX(-50%);
     width:190px;height:96px;opacity:.9}
   #attitude svg{width:100%;height:100%;overflow:visible}
 
-  /* ---- depth rail ---- */
   #rail{position:absolute;right:calc(var(--pad-r) + 16px);top:50%;transform:translateY(-50%);
     width:3px;height:38vh;max-height:280px;background:rgba(237,230,218,.16);border-radius:2px}
   #railFill{position:absolute;left:0;bottom:0;width:100%;height:0%;
-    background:linear-gradient(to top,var(--rock),var(--amber));border-radius:2px}
+    background:linear-gradient(to top,rgba(237,230,218,.5),var(--amber));border-radius:2px}
   #railHead{position:absolute;right:9px;bottom:0;transform:translateY(50%);
     font-size:10px;letter-spacing:.14em;color:var(--amber);white-space:nowrap}
   #railLabel{position:absolute;right:0;top:-22px;font-family:var(--display);font-size:10px;
     letter-spacing:.28em;text-transform:uppercase;opacity:.6}
 
-  /* ---- controls ---- */
   #stickZone{position:absolute;left:0;bottom:0;width:52%;height:56%;pointer-events:auto}
   #stickBase{position:absolute;width:132px;height:132px;border-radius:50%;
     border:1px solid rgba(237,230,218,.22);background:rgba(21,14,20,.28);
     left:calc(var(--pad-l) + 26px);bottom:calc(var(--pad-b) + 30px);
-    display:flex;align-items:center;justify-content:center;transition:opacity .2s}
+    display:flex;align-items:center;justify-content:center}
   #stickBase::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;
     background:rgba(237,230,218,.3)}
   #stickKnob{width:56px;height:56px;border-radius:50%;background:rgba(245,196,94,.16);
@@ -81,14 +75,12 @@
   #boostBar{margin-top:9px;height:3px;background:rgba(237,230,218,.16);border-radius:2px;overflow:hidden}
   #boostFill{height:100%;width:100%;background:var(--amber)}
 
-  /* ---- proximity vignette ---- */
   #vignette{position:absolute;inset:0;opacity:0;pointer-events:none;
     box-shadow:inset 0 0 120px 20px rgba(226,87,76,.75)}
 
-  /* ---- panels ---- */
   #panel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(120% 90% at 50% 40%,rgba(21,14,20,.6),rgba(21,14,20,.94));
-    pointer-events:auto;padding:24px}
+    pointer-events:auto;padding:24px;overflow-y:auto}
   .card{width:100%;max-width:380px;text-align:center}
   .kicker{font-family:var(--display);font-size:11px;letter-spacing:.36em;
     text-transform:uppercase;color:var(--amber)}
@@ -109,9 +101,10 @@
   #levelPips{display:flex;gap:6px;justify-content:center;margin-top:22px}
   .pip{width:22px;height:2px;background:rgba(237,230,218,.22)}
   .pip.done{background:var(--amber)}
-  .toggle{margin-top:20px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  .toggle{margin-top:16px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
     opacity:.55;cursor:pointer;display:inline-block;border-bottom:1px dotted rgba(237,230,218,.4);
     padding-bottom:2px}
+  .toggles{display:flex;flex-direction:column;align-items:center;gap:2px}
   @media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
 </style>
 </head>
@@ -134,9 +127,7 @@
         <line x1="-56" y1="0" x2="-49" y2="0"/>
         <line x1="56" y1="0" x2="49" y2="0"/>
       </g>
-      <g id="bankNeedle">
-        <polygon points="0,-52 -5,-43 5,-43" fill="#f5c45e"/>
-      </g>
+      <g id="bankNeedle"><polygon points="0,-52 -5,-43 5,-43" fill="#f5c45e"/></g>
       <g id="ladder">
         <line x1="-26" y1="0" x2="26" y2="0" stroke="#f5c45e" stroke-width="1.4" opacity=".9"/>
         <line x1="-16" y1="-14" x2="16" y2="-14" stroke="rgba(237,230,218,.4)" stroke-width="1"/>
@@ -165,9 +156,7 @@
 
   <div id="vignette"></div>
 
-  <div id="panel">
-    <div class="card" id="card"></div>
-  </div>
+  <div id="panel"><div class="card" id="card"></div></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -176,33 +165,56 @@
 "use strict";
 
 /* ============================================================
-   LEVELS
+   LEVELS  — each `env` drives terrain styling, decoration and sky
+   env: canyon | mountain | space | volcanic | ice
+   Distances in metres, speeds in metres/second.
    ============================================================ */
 const LEVELS = [
-  { name:"Ochre Run",     seed:1137, length:2100, speed:56, hw:34, hwv:5,
+  { name:"Ochre Run", env:"canyon", seed:1137,
+    length:2100, speed:56, hw:34, hwv:5, wallH:135,
     a1:45, f1:0.0050, a2:15, f2:0.0140, a3:12, f3:0.0090, a4:5, f4:0.0210,
-    density:0.010, cave:false, caveH:0,
-    sky:"#4a2a34", horizon:"#8d5240", fog:0x6b3b34, rock:[0.71,0.40,0.24], sun:0xffd9a8 },
+    density:0.011, cave:false, caveH:0,
+    strata:0.26, capLine:null, capColor:null,
+    sky:"#1a1016", horizon:"#4d2a22", fog:0x2b1a1a, fogNear:80, fogFar:520,
+    rock:[0.46,0.29,0.20], sun:0xffb98a, sunInt:0.72, hemiInt:0.34,
+    motes:{color:0xd8b48c,size:0.6,opacity:0.35,rise:0} },
 
-  { name:"Split Fault",   seed:2291, length:2400, speed:60, hw:30, hwv:6,
-    a1:58, f1:0.0055, a2:20, f2:0.0165, a3:15, f3:0.0100, a4:6, f4:0.0230,
-    density:0.015, cave:false, caveH:0,
-    sky:"#2f2440", horizon:"#7a4b52", fog:0x5a3a45, rock:[0.62,0.36,0.30], sun:0xffc9b0 },
+  { name:"Alpine Reach", env:"mountain", seed:2291,
+    length:2600, speed:62, hw:50, hwv:9, wallH:200,
+    a1:70, f1:0.0044, a2:24, f2:0.0130, a3:16, f3:0.0085, a4:6, f4:0.0200,
+    density:0.017, cave:false, caveH:0,
+    strata:0.09, capLine:118, capColor:[0.94,0.96,1.00],
+    sky:"#3f7fc4", horizon:"#d3e7f4", fog:0xc2d9ea, fogNear:220, fogFar:1150,
+    rock:[0.40,0.43,0.41], sun:0xfff6e2, sunInt:1.15, hemiInt:0.70,
+    motes:{color:0xffffff,size:0.7,opacity:0.55,rise:-2} },
 
-  { name:"The Long Dark", seed:3373, length:2500, speed:62, hw:27, hwv:4,
-    a1:52, f1:0.0060, a2:18, f2:0.0180, a3:12, f3:0.0110, a4:5, f4:0.0250,
-    density:0.017, cave:true,  caveH:58,
-    sky:"#12161f", horizon:"#2a3040", fog:0x1b2029, rock:[0.32,0.31,0.36], sun:0x9fb6d8 },
-
-  { name:"Emberwind",     seed:4457, length:2700, speed:66, hw:25, hwv:5,
-    a1:66, f1:0.0062, a2:24, f2:0.0190, a3:17, f3:0.0115, a4:7, f4:0.0260,
+  { name:"Orbital Debris", env:"space", seed:3373,
+    length:2700, speed:66, hw:32, hwv:5, wallH:165,
+    a1:62, f1:0.0058, a2:22, f2:0.0170, a3:14, f3:0.0105, a4:6, f4:0.0240,
     density:0.021, cave:false, caveH:0,
-    sky:"#3d1418", horizon:"#a8452a", fog:0x7a2f24, rock:[0.78,0.32,0.18], sun:0xffb27a },
+    strata:0.06, capLine:null, capColor:null,
+    sky:"#04050c", horizon:"#0e1226", fog:0x06080f, fogNear:180, fogFar:950,
+    rock:[0.33,0.32,0.39], sun:0xc4d6ff, sunInt:0.88, hemiInt:0.16,
+    stars:true,
+    motes:{color:0xbfd4ff,size:0.5,opacity:0.7,rise:0} },
 
-  { name:"Needle's Eye",  seed:5531, length:2900, speed:70, hw:22, hwv:4,
+  { name:"Emberwind", env:"volcanic", seed:4457,
+    length:2800, speed:68, hw:26, hwv:5, wallH:150,
+    a1:66, f1:0.0062, a2:24, f2:0.0190, a3:17, f3:0.0115, a4:7, f4:0.0260,
+    density:0.024, cave:true, caveH:56,
+    strata:0.32, capLine:null, capColor:null,
+    sky:"#2a0b0c", horizon:"#8f2c14", fog:0x3a1108, fogNear:45, fogFar:380,
+    rock:[0.36,0.18,0.13], sun:0xff8f52, sunInt:0.62, hemiInt:0.30,
+    motes:{color:0xff9d4a,size:0.9,opacity:0.8,rise:9} },
+
+  { name:"Needle's Eye", env:"ice", seed:5531,
+    length:2900, speed:72, hw:22, hwv:4, wallH:145,
     a1:70, f1:0.0068, a2:26, f2:0.0210, a3:18, f3:0.0125, a4:8, f4:0.0285,
-    density:0.026, cave:true,  caveH:52,
-    sky:"#0d1a1a", horizon:"#1f4440", fog:0x14322e, rock:[0.26,0.44,0.40], sun:0xb8f0dc }
+    density:0.028, cave:true, caveH:50,
+    strata:0.36, capLine:34, capColor:[0.86,0.96,1.00],
+    sky:"#08161c", horizon:"#2f7280", fog:0x123038, fogNear:45, fogFar:400,
+    rock:[0.40,0.55,0.62], sun:0xd8f4ff, sunInt:0.92, hemiInt:0.46,
+    motes:{color:0xdff2ff,size:0.6,opacity:0.6,rise:-1} }
 ];
 
 const PLANE_R      = 2.6;
@@ -213,25 +225,24 @@ const PITCH_LIMIT  = 0.58;
 const BOOST_ADD    = 42;
 const BOOST_DRAIN  = 0.34;
 const BOOST_REGEN  = 0.17;
-const WALL_H       = 135;
 const SEG          = 4;
 
 /* ============================================================
    STATE
    ============================================================ */
 let scene, camera, renderer, clock;
-let canyon = null, plane = null, dust = null, debris = null, sky = null;
+let canyon = null, plane = null, motes = null, debris = null, sky = null;
 let sunLight, hemiLight;
 
 const state = {
-  mode:"title",          // title | flying | crashed | cleared | victory
+  mode:"title",
   levelIndex:0,
   unlocked:0,
   z:0, x:0, y:0,
   yaw:0, pitch:0, roll:0,
   speed:0, boostFuel:1, boosting:false,
   time:0, crashes:0, deathTimer:0,
-  invertY:true,
+  invertY:true, invertX:true,
   times:new Array(LEVELS.length).fill(null),
   shake:0
 };
@@ -261,18 +272,26 @@ function fmtTime(t){
 function buildCanyon(L){
   const rand = rng(L.seed);
   const pos=[], col=[];
-  const c=new THREE.Color();
 
+  // shade: 0 = deep/shadowed, 1 = sunlit top. Strata banding + optional
+  // snow/frost cap above capLine gives layered rock cheaply, in vertex colours.
   function push(x,y,z,shade){
     pos.push(x,y,z);
-    const n = 0.82 + shade*0.36;
-    col.push(L.rock[0]*n, L.rock[1]*n, L.rock[2]*n);
+    const band = 0.86 + 0.14*Math.sin(y*L.strata + x*0.012);
+    const n = (0.80 + shade*0.38) * band;
+    let r=L.rock[0]*n, g=L.rock[1]*n, b=L.rock[2]*n;
+    if(L.capLine!==null && y>L.capLine){
+      const t=clamp((y-L.capLine)/34,0,1)*0.92;
+      r=lerp(r,L.capColor[0],t); g=lerp(g,L.capColor[1],t); b=lerp(b,L.capColor[2],t);
+    }
+    col.push(r,g,b);
   }
   function quad(a,b,d,e){
     push(a[0],a[1],a[2],a[3]); push(b[0],b[1],b[2],b[3]); push(d[0],d[1],d[2],d[3]);
     push(a[0],a[1],a[2],a[3]); push(d[0],d[1],d[2],d[3]); push(e[0],e[1],e[2],e[3]);
   }
 
+  const WALL_H=L.wallH;
   const steps = Math.floor(L.length/SEG)+40;
   let prev=null;
   for(let i=0;i<steps;i++){
@@ -282,25 +301,36 @@ function buildCanyon(L){
     const rx = cx+hw + Math.abs(ridge(z,1))*0.35;
     const topL = fy + WALL_H + ridge(z,0)*2.2;
     const topR = fy + WALL_H + ridge(z,1)*2.2;
-    const cur = {z, cx, fy, hw, lx, rx, topL, topR,
+    // mid-height break gives the walls a two-stage silhouette rather than one flat face
+    const midL = fy + WALL_H*0.42 + Math.sin(z*0.031)*6;
+    const midR = fy + WALL_H*0.42 + Math.sin(z*0.031+2.1)*6;
+    const mlx = lx - 7 - Math.sin(z*0.026)*3;
+    const mrx = rx + 7 + Math.sin(z*0.026+1.4)*3;
+    const cur = {z, cx, fy, hw, lx, rx, topL, topR, midL, midR, mlx, mrx,
                  fl:fy+Math.sin(z*0.09)*0.7, fr:fy+Math.sin(z*0.09+1.3)*0.7};
 
     if(prev){
-      // floor
       quad([prev.lx,prev.fl,prev.z,0.15],[cur.lx,cur.fl,cur.z,0.15],
            [cur.rx,cur.fr,cur.z,0.25],[prev.rx,prev.fr,prev.z,0.25]);
-      // left wall (inward face)
-      quad([prev.lx,prev.fl,prev.z,0.0],[prev.lx-4,prev.topL,prev.z,1.0],
-           [cur.lx-4,cur.topL,cur.z,1.0],[cur.lx,cur.fl,cur.z,0.0]);
-      // right wall
+
+      // left wall, lower then upper stage
+      quad([prev.lx,prev.fl,prev.z,0.0],[prev.mlx,prev.midL,prev.z,0.55],
+           [cur.mlx,cur.midL,cur.z,0.55],[cur.lx,cur.fl,cur.z,0.0]);
+      quad([prev.mlx,prev.midL,prev.z,0.55],[prev.lx-4,prev.topL,prev.z,1.0],
+           [cur.lx-4,cur.topL,cur.z,1.0],[cur.mlx,cur.midL,cur.z,0.55]);
+
+      // right wall, lower then upper stage
       quad([prev.rx,prev.fr,prev.z,0.0],[cur.rx,cur.fr,cur.z,0.0],
+           [cur.mrx,cur.midR,cur.z,0.55],[prev.mrx,prev.midR,prev.z,0.55]);
+      quad([prev.mrx,prev.midR,prev.z,0.55],[cur.mrx,cur.midR,cur.z,0.55],
            [cur.rx+4,cur.topR,cur.z,1.0],[prev.rx+4,prev.topR,prev.z,1.0]);
-      // plateaus
-      quad([prev.lx-4,prev.topL,prev.z,0.9],[prev.lx-320,prev.topL+14,prev.z,0.6],
-           [cur.lx-320,cur.topL+14,cur.z,0.6],[cur.lx-4,cur.topL,cur.z,0.9]);
+
+      // plateaus / outer slopes
+      quad([prev.lx-4,prev.topL,prev.z,0.9],[prev.lx-340,prev.topL+16,prev.z,0.6],
+           [cur.lx-340,cur.topL+16,cur.z,0.6],[cur.lx-4,cur.topL,cur.z,0.9]);
       quad([prev.rx+4,prev.topR,prev.z,0.9],[cur.rx+4,cur.topR,cur.z,0.9],
-           [cur.rx+320,cur.topR+14,cur.z,0.6],[prev.rx+320,prev.topR+14,prev.z,0.6]);
-      // cave roof
+           [cur.rx+340,cur.topR+16,cur.z,0.6],[prev.rx+340,prev.topR+16,prev.z,0.6]);
+
       if(L.cave){
         const rh = L.caveH + Math.sin(z*0.021)*5;
         const rhp = L.caveH + Math.sin(prev.z*0.021)*5;
@@ -315,37 +345,44 @@ function buildCanyon(L){
   geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
   geo.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
   geo.computeVertexNormals();
-  const mat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true,side:THREE.DoubleSide});
-  const mesh=new THREE.Mesh(geo,mat);
+  const mesh=new THREE.Mesh(geo,new THREE.MeshLambertMaterial(
+    {vertexColors:true,flatShading:true,side:THREE.DoubleSide}));
 
   const group=new THREE.Group();
   group.add(mesh);
 
-  /* ---- obstacles ---- */
+  /* ---- obstacles (these DO get collision entries) ---- */
   const obstacles=[], bins=new Map();
   const rockMat=new THREE.MeshLambertMaterial({
-    color:new THREE.Color(L.rock[0]*0.85,L.rock[1]*0.85,L.rock[2]*0.85), flatShading:true});
+    color:new THREE.Color(L.rock[0]*0.9,L.rock[1]*0.9,L.rock[2]*0.9), flatShading:true});
   const pillarGeo=new THREE.CylinderGeometry(1,1.35,1,7,1);
   const boulderGeo=new THREE.IcosahedronGeometry(1,0);
+  const shardGeo=new THREE.OctahedronGeometry(1,0);
+  const obGeo = (L.env==="ice") ? shardGeo : boulderGeo;
 
   let z=140;
   while(z < L.length-90){
     z += 26 + rand()*(1/L.density)*0.55;
     if(z>=L.length-90) break;
     const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
-    const roof = L.cave ? fy + L.caveH : fy + WALL_H;
+    const roof = L.cave ? fy + L.caveH : fy + L.wallH;
     const kind = rand();
 
-    if(kind<0.42){                                  // full column
+    if(kind<0.40){                                   // full-height column
       const r = 3.2 + rand()*3.4;
       const px = cx + (rand()*2-1)*(hw-r-6);
       const h  = roof - fy;
       const m=new THREE.Mesh(pillarGeo,rockMat);
-      m.scale.set(r,h,r); m.position.set(px,fy+h/2,z);
-      m.rotation.y=rand()*3;
+      m.scale.set(r,h,r); m.position.set(px,fy+h/2,z); m.rotation.y=rand()*3;
       group.add(m);
-      obstacles.push({t:0,x:px,z:z,r:r,y0:-1e5,y1:1e5});
-    } else if(kind<0.72){                           // stalagmite / stalactite spike
+      // collar detail — purely visual, sits flush on the column so it can't be clipped
+      const collar=new THREE.Mesh(boulderGeo,rockMat);
+      collar.scale.set(r*1.5,r*0.7,r*1.5);
+      collar.position.set(px,fy+h*(0.25+rand()*0.5),z);
+      collar.rotation.set(rand()*3,rand()*3,rand()*3);
+      group.add(collar);
+      obstacles.push({t:0,x:px,z:z,r:r*1.1,y0:-1e5,y1:1e5});
+    } else if(kind<0.70){                            // spire from floor or roof
       const r = 3.0 + rand()*3.0;
       const h = 16 + rand()*26;
       const px = cx + (rand()*2-1)*(hw-r-5);
@@ -360,12 +397,13 @@ function buildCanyon(L){
       }
       m.rotation.y=rand()*3;
       group.add(m);
-    } else {                                        // floating boulder
+    } else {                                         // floating mass
       const r = 4.0 + rand()*4.0;
       const px = cx + (rand()*2-1)*(hw-r-4);
       const py = fy + 8 + rand()*Math.max(10,(roof-fy)-20);
-      const m=new THREE.Mesh(boulderGeo,rockMat);
-      m.scale.set(r,r*0.82,r); m.position.set(px,py,z);
+      const m=new THREE.Mesh(obGeo,rockMat);
+      m.scale.set(r,r*0.82,r);
+      m.position.set(px,py,z);
       m.rotation.set(rand()*3,rand()*3,rand()*3);
       group.add(m);
       obstacles.push({t:1,x:px,y:py,z:z,r:r});
@@ -377,8 +415,84 @@ function buildCanyon(L){
     bins.get(k).push(o);
   }
 
+  decorate(group,L,rand);
+
   group.userData={L,obstacles,bins};
   return group;
+}
+
+/* ============================================================
+   DECORATION — visual only. Everything here is placed OUTSIDE the
+   flight corridor (beyond the wall tops) so it needs no collision
+   entry and can never be clipped by the plane.
+   ============================================================ */
+function decorate(group,L,rand){
+  const dark=new THREE.Color(L.rock[0]*0.55,L.rock[1]*0.55,L.rock[2]*0.55);
+  const capMat = L.capColor
+    ? new THREE.MeshLambertMaterial({color:new THREE.Color(L.capColor[0],L.capColor[1],L.capColor[2]),flatShading:true})
+    : null;
+  const outerMat=new THREE.MeshLambertMaterial({color:dark,flatShading:true});
+  const coneGeo=new THREE.ConeGeometry(1,1,6);
+  const rockGeo=new THREE.IcosahedronGeometry(1,0);
+  const shardGeo=new THREE.OctahedronGeometry(1,0);
+
+  const step = (L.env==="mountain") ? 110 : 150;
+  for(let z=60; z<L.length; z+=step*(0.6+rand()*0.8)){
+    for(let side=-1; side<=1; side+=2){
+      const cx=centerX(z,L), hw=halfWidth(z,L), fy=floorY(z,L);
+      const top = fy + L.wallH;
+      const base = cx + side*(hw + 40 + rand()*220);
+
+      if(L.env==="mountain"){
+        const h=60+rand()*150, r=28+rand()*40;
+        const peak=new THREE.Mesh(coneGeo,outerMat);
+        peak.scale.set(r,h,r); peak.position.set(base,top+h/2-10,z);
+        group.add(peak);
+        if(capMat){                                   // snow cap on the top third
+          const cap=new THREE.Mesh(coneGeo,capMat);
+          cap.scale.set(r*0.42,h*0.34,r*0.42);
+          cap.position.set(base,top+h-h*0.17-10,z);
+          group.add(cap);
+        }
+      } else if(L.env==="space"){
+        for(let k=0;k<2;k++){                          // drifting asteroid clusters
+          const r=6+rand()*22;
+          const a=new THREE.Mesh(rockGeo,outerMat);
+          a.scale.set(r,r*(0.6+rand()*0.5),r);
+          a.position.set(base+(rand()*2-1)*70, top - 40 + rand()*220, z+(rand()*2-1)*90);
+          a.rotation.set(rand()*3,rand()*3,rand()*3);
+          group.add(a);
+        }
+      } else if(L.env==="ice"){
+        const h=20+rand()*70, r=6+rand()*16;
+        const s=new THREE.Mesh(shardGeo,capMat||outerMat);
+        s.scale.set(r,h,r); s.position.set(base,top+h*0.3,z);
+        s.rotation.y=rand()*3; s.rotation.z=(rand()*2-1)*0.25;
+        group.add(s);
+      } else {                                         // canyon + volcanic: mesas & boulders
+        const h=14+rand()*46, r=14+rand()*34;
+        const m=new THREE.Mesh(rockGeo,outerMat);
+        m.scale.set(r,h,r); m.position.set(base,top+h*0.25,z);
+        m.rotation.set(rand()*0.4,rand()*3,rand()*0.4);
+        group.add(m);
+      }
+    }
+  }
+
+  // volcanic: glowing fissures along the canyon floor, flush and non-blocking
+  if(L.env==="volcanic"){
+    const glow=new THREE.MeshBasicMaterial({color:0xff7a2a,transparent:true,opacity:0.85});
+    const stripGeo=new THREE.PlaneGeometry(1,1);
+    for(let z=80; z<L.length; z+=40+rand()*90){
+      const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
+      const p=new THREE.Mesh(stripGeo,glow);
+      p.rotation.x=-Math.PI/2;
+      p.scale.set(2+rand()*5, 14+rand()*40, 1);
+      p.position.set(cx+(rand()*2-1)*hw*0.8, fy+0.35, z);
+      p.rotation.z=(rand()*2-1)*0.5;
+      group.add(p);
+    }
+  }
 }
 
 /* ============================================================
@@ -389,26 +503,52 @@ function buildPlane(){
   const body=new THREE.MeshLambertMaterial({color:0xede6da,flatShading:true});
   const trim=new THREE.MeshLambertMaterial({color:0xe2574c,flatShading:true});
   const dark=new THREE.MeshLambertMaterial({color:0x3a2e33,flatShading:true});
+  const steel=new THREE.MeshLambertMaterial({color:0x8d8a92,flatShading:true});
 
   const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.78,0.5,6.4,8),body);
   fus.rotation.x=Math.PI/2; g.add(fus);
 
+  const spine=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.3,5.2),trim);
+  spine.position.set(0,0.68,-0.4); g.add(spine);
+
   const nose=new THREE.Mesh(new THREE.ConeGeometry(0.78,1.9,8),trim);
   nose.rotation.x=Math.PI/2; nose.position.z=4.1; g.add(nose);
+  const probe=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,1.5,4),steel);
+  probe.rotation.x=Math.PI/2; probe.position.z=5.6; g.add(probe);
 
   const canopy=new THREE.Mesh(new THREE.SphereGeometry(0.62,8,6),dark);
   canopy.scale.set(1,0.7,1.7); canopy.position.set(0,0.5,0.9); g.add(canopy);
 
   const wing=new THREE.Mesh(new THREE.BoxGeometry(9.6,0.24,2.1),body);
   wing.position.z=0.2; g.add(wing);
+  const inner=new THREE.Mesh(new THREE.BoxGeometry(4.4,0.3,2.6),body);
+  inner.position.z=0.1; g.add(inner);
+
   const wtipL=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.5,1.5),trim);
   wtipL.position.set(-4.8,0.1,0.2); g.add(wtipL);
   const wtipR=wtipL.clone(); wtipR.position.x=4.8; g.add(wtipR);
+
+  // nav lights — port red, starboard green, as on a real airframe
+  const navL=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,5),
+    new THREE.MeshBasicMaterial({color:0xe2574c}));
+  navL.position.set(-5.15,0.12,0.2); g.add(navL);
+  const navR=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,5),
+    new THREE.MeshBasicMaterial({color:0x5fd08a}));
+  navR.position.set(5.15,0.12,0.2); g.add(navR);
+
+  const podL=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.34,2.4,6),steel);
+  podL.rotation.x=Math.PI/2; podL.position.set(-2.5,-0.28,0.4); g.add(podL);
+  const podR=podL.clone(); podR.position.x=2.5; g.add(podR);
 
   const tail=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.2,1.3),body);
   tail.position.z=-2.8; g.add(tail);
   const fin=new THREE.Mesh(new THREE.BoxGeometry(0.2,1.7,1.5),trim);
   fin.position.set(0,0.85,-2.9); g.add(fin);
+  const finTip=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.3,0.7),body);
+  finTip.position.set(0,1.62,-3.1); g.add(finTip);
+
+  const ring=new THREE.Mesh(new THREE.CylinderGeometry(0.56,0.56,0.3,8),steel);
+  ring.rotation.x=Math.PI/2; ring.position.z=-3.35; g.add(ring);
 
   const flame=new THREE.Mesh(new THREE.ConeGeometry(0.5,2.4,7),
     new THREE.MeshBasicMaterial({color:0xf5c45e,transparent:true,opacity:0.85}));
@@ -418,10 +558,10 @@ function buildPlane(){
 }
 
 /* ============================================================
-   DUST + DEBRIS
+   PARTICLES
    ============================================================ */
-function buildDust(){
-  const n=420, p=new Float32Array(n*3);
+function buildMotes(){
+  const n=460, p=new Float32Array(n*3);
   for(let i=0;i<n;i++){
     p[i*3]  =(Math.random()*2-1)*70;
     p[i*3+1]=(Math.random()*2-1)*50;
@@ -448,27 +588,57 @@ function burst(x,y,z){
   const p=debris.geometry.attributes.position.array, v=debris.userData.vel;
   for(let i=0;i<p.length;i+=3){
     p[i]=x; p[i+1]=y; p[i+2]=z;
-    v[i]  =(Math.random()*2-1)*26;
-    v[i+1]=(Math.random()*2-1)*26;
-    v[i+2]=(Math.random()*2-1)*26;
+    v[i]=(Math.random()*2-1)*26; v[i+1]=(Math.random()*2-1)*26; v[i+2]=(Math.random()*2-1)*26;
   }
   debris.geometry.attributes.position.needsUpdate=true;
-  debris.visible=true;
-  debris.material.opacity=1;
+  debris.visible=true; debris.material.opacity=1;
 }
 
 /* ============================================================
-   SKY
+   SKY — dome, plus stars / sun disc per environment
    ============================================================ */
 function buildSky(L){
-  const geo=new THREE.SphereGeometry(1400,16,10);
-  const mat=new THREE.ShaderMaterial({
+  const grp=new THREE.Group();
+
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(1500,18,12),new THREE.ShaderMaterial({
     side:THREE.BackSide, depthWrite:false, fog:false,
     uniforms:{ top:{value:new THREE.Color(L.sky)}, bottom:{value:new THREE.Color(L.horizon)} },
     vertexShader:"varying float h; void main(){ h=normalize(position).y; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
     fragmentShader:"varying float h; uniform vec3 top; uniform vec3 bottom; void main(){ gl_FragColor=vec4(mix(bottom,top,clamp(h*1.4+0.25,0.0,1.0)),1.0); }"
-  });
-  return new THREE.Mesh(geo,mat);
+  }));
+  grp.add(dome);
+
+  if(L.stars){
+    const n=900, p=new Float32Array(n*3);
+    for(let i=0;i<n;i++){
+      const th=Math.random()*Math.PI*2, ph=Math.acos(Math.random()*2-1), r=1300;
+      p[i*3]  =r*Math.sin(ph)*Math.cos(th);
+      p[i*3+1]=r*Math.cos(ph);
+      p[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+    }
+    const sg=new THREE.BufferGeometry();
+    sg.setAttribute("position",new THREE.BufferAttribute(p,3));
+    grp.add(new THREE.Points(sg,new THREE.PointsMaterial(
+      {color:0xffffff,size:5,sizeAttenuation:false,transparent:true,opacity:0.9,depthWrite:false,fog:false})));
+
+    const planet=new THREE.Mesh(new THREE.SphereGeometry(150,20,16),
+      new THREE.MeshBasicMaterial({color:0x5d6ea8,fog:false}));
+    planet.position.set(-700,320,900);
+    grp.add(planet);
+  }
+
+  if(L.env==="mountain"){
+    const sun=new THREE.Mesh(new THREE.SphereGeometry(58,16,12),
+      new THREE.MeshBasicMaterial({color:0xfff8e4,fog:false}));
+    sun.position.set(-520,520,900);
+    grp.add(sun);
+    const halo=new THREE.Mesh(new THREE.SphereGeometry(105,16,12),
+      new THREE.MeshBasicMaterial({color:0xfff1cc,transparent:true,opacity:0.18,fog:false}));
+    halo.position.copy(sun.position);
+    grp.add(halo);
+  }
+
+  return grp;
 }
 
 /* ============================================================
@@ -476,7 +646,7 @@ function buildSky(L){
    ============================================================ */
 function init(){
   scene=new THREE.Scene();
-  camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2200);
+  camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2400);
   renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.75));
   renderer.setSize(window.innerWidth,window.innerHeight);
@@ -486,7 +656,7 @@ function init(){
   sunLight=new THREE.DirectionalLight(0xffd9a8,0.95);
   sunLight.position.set(-0.4,1,0.3); scene.add(sunLight);
 
-  dust=buildDust(); scene.add(dust);
+  motes=buildMotes(); scene.add(motes);
   debris=buildDebris(); scene.add(debris);
   plane=buildPlane(); scene.add(plane);
 
@@ -506,25 +676,35 @@ function onResize(){
 /* ============================================================
    LEVEL LIFECYCLE
    ============================================================ */
+function applyEnvironment(L){
+  scene.fog=new THREE.Fog(L.fog,L.fogNear,L.fogFar);
+  sunLight.color.setHex(L.sun);
+  sunLight.intensity=L.sunInt;
+  hemiLight.intensity=L.hemiInt;
+  hemiLight.groundColor.setHex(L.fog);
+  motes.material.color.setHex(L.motes.color);
+  motes.material.size=L.motes.size;
+  motes.material.opacity=L.motes.opacity;
+  motes.userData.rise=L.motes.rise;
+  document.querySelector("meta[name=theme-color]").setAttribute("content",L.sky);
+}
+
 function loadLevel(i){
   state.levelIndex=i;
   const L=LEVELS[i];
 
   if(canyon){ scene.remove(canyon); disposeGroup(canyon); }
-  if(sky){ scene.remove(sky); sky.geometry.dispose(); sky.material.dispose(); }
+  if(sky){ scene.remove(sky); disposeGroup(sky); }
 
   sky=buildSky(L); scene.add(sky);
   canyon=buildCanyon(L); scene.add(canyon);
-  scene.fog=new THREE.Fog(L.fog, L.cave?60:120, L.cave?420:620);
-  sunLight.color.setHex(L.sun);
-  hemiLight.intensity = L.cave?0.35:0.55;
+  applyEnvironment(L);
 
-  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+(L.cave?L.caveH*0.5:26);
+  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+(L.cave?L.caveH*0.5:28);
   state.yaw=0; state.pitch=0; state.roll=0;
-  state.speed=L.speed; state.boostFuel=1; state.time=0; state.deathTimer=0;
-  state.shake=0;
+  state.speed=L.speed; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
   debris.visible=false;
-
+  plane.visible=true;
   plane.position.set(state.x,state.y,state.z);
   plane.rotation.set(0,0,0);
   placeCamera(true);
@@ -558,8 +738,7 @@ function placeCamera(snap){
   forwardVec(state.yaw, state.pitch*0.45, _fwd);
   _tmp.set(state.x,state.y,state.z).addScaledVector(_fwd,-back);
   _tmp.y += up;
-  if(snap) camera.position.copy(_tmp);
-  else camera.position.lerp(_tmp, 0.16);
+  if(snap) camera.position.copy(_tmp); else camera.position.lerp(_tmp,0.16);
   forwardVec(state.yaw, state.pitch, _fwd);
   _look.set(state.x,state.y,state.z).addScaledVector(_fwd,26);
   camera.up.set(Math.sin(state.roll)*0.35,1,0);
@@ -576,7 +755,10 @@ function updateFlight(dt){
   if(input.keys["ArrowDown"]||input.keys["s"]) sy=-1;
   const wantBoost = input.boost || !!input.keys["Shift"];
 
+  // Axis inversion applied once, up front — roll follows the inverted sx so
+  // the plane always banks into the turn it's actually making.
   if(state.invertY) sy=-sy;
+  if(state.invertX) sx=-sx;
 
   state.yaw   = clamp(state.yaw   + sx*YAW_RATE*dt,  -YAW_LIMIT, YAW_LIMIT);
   state.pitch = clamp(state.pitch + sy*PITCH_RATE*dt,-PITCH_LIMIT,PITCH_LIMIT);
@@ -587,8 +769,7 @@ function updateFlight(dt){
 
   state.boosting = wantBoost && state.boostFuel>0.02;
   state.boostFuel = clamp(state.boostFuel + (state.boosting?-BOOST_DRAIN:BOOST_REGEN)*dt, 0, 1);
-  const target = L.speed + (state.boosting?BOOST_ADD:0);
-  state.speed = lerp(state.speed, target, 2.4*dt);
+  state.speed = lerp(state.speed, L.speed + (state.boosting?BOOST_ADD:0), 2.4*dt);
 
   forwardVec(state.yaw,state.pitch,_fwd);
   state.x += _fwd.x*state.speed*dt;
@@ -611,9 +792,9 @@ function checkCollision(){
   const cx=centerX(state.z,L), fy=floorY(state.z,L), hw=halfWidth(state.z,L);
   const side = hw - Math.abs(state.x-cx);
   const below = state.y - (fy+PLANE_R);
-  const ceil = L.cave ? (fy+L.caveH-PLANE_R) - state.y : (fy+WALL_H-PLANE_R) - state.y;
+  const ceil = L.cave ? (fy+L.caveH-PLANE_R) - state.y : (fy+L.wallH-PLANE_R) - state.y;
 
-  let clearance = Math.min(side, below, ceil);
+  let clearance = Math.min(side,below,ceil);
   if(side<PLANE_R || below<0 || ceil<0) return {hit:true, clearance:0};
 
   const k=Math.floor(state.z/60);
@@ -649,9 +830,7 @@ function tick(){
   if(state.mode==="flying"){
     updateFlight(dt);
     const c=checkCollision();
-    if(c.hit) crash();
-    else updateHUD(c.clearance);
-
+    if(c.hit) crash(); else updateHUD(c.clearance);
     if(state.z >= LEVELS[state.levelIndex].length) clearLevel();
   } else if(state.mode==="crashed"){
     state.deathTimer+=dt;
@@ -661,7 +840,7 @@ function tick(){
     state.z += 26*dt;
     if(canyon){
       const L=LEVELS[state.levelIndex];
-      state.x=centerX(state.z,L); state.y=floorY(state.z,L)+(L.cave?L.caveH*0.5:26);
+      state.x=centerX(state.z,L); state.y=floorY(state.z,L)+(L.cave?L.caveH*0.5:28);
       plane.position.set(state.x,state.y,state.z);
       plane.rotation.set(0,0,0);
       if(state.z>L.length-200) state.z=0;
@@ -678,13 +857,17 @@ function tick(){
 
   if(sky) sky.position.copy(camera.position);
 
-  // dust scroll
-  const dp=dust.geometry.attributes.position.array;
-  for(let i=2;i<dp.length;i+=3){
-    if(dp[i] + dust.position.z < camera.position.z-40){ dp[i]+=340; }
+  const mp=motes.geometry.attributes.position.array;
+  const rise=motes.userData.rise||0;
+  for(let i=0;i<mp.length;i+=3){
+    if(rise!==0){
+      mp[i+1]+=rise*dt;
+      if(mp[i+1]>50) mp[i+1]=-50; else if(mp[i+1]<-50) mp[i+1]=50;
+    }
+    if(mp[i+2] + motes.position.z < camera.position.z-40) mp[i+2]+=340;
   }
-  dust.position.set(state.x, state.y, Math.floor(state.z/340)*340);
-  dust.geometry.attributes.position.needsUpdate=true;
+  motes.position.set(state.x,state.y,Math.floor(state.z/340)*340);
+  motes.geometry.attributes.position.needsUpdate=true;
 
   if(debris.visible){
     const p=debris.geometry.attributes.position.array, v=debris.userData.vel;
@@ -704,10 +887,7 @@ function tick(){
    ============================================================ */
 function crash(){
   if(state.mode!=="flying") return;
-  state.mode="crashed";
-  state.crashes++;
-  state.deathTimer=0;
-  state.shake=1;
+  state.mode="crashed"; state.crashes++; state.deathTimer=0; state.shake=1;
   burst(state.x,state.y,state.z);
   plane.visible=false;
   showHUD(false);
@@ -749,13 +929,26 @@ function pips(){
   return h+"</div>";
 }
 
+function pitchLabel(){ return "Pitch: "+(state.invertY?"Pull back to climb":"Push forward to climb"); }
+function steerLabel(){ return "Steer: "+(state.invertX?"Push left to turn right":"Push right to turn right"); }
+
+function toggleBlock(suffix){
+  return '<div class="toggles">'+
+    '<span class="toggle" id="btnInvertY'+suffix+'">'+pitchLabel()+'</span>'+
+    '<span class="toggle" id="btnInvertX'+suffix+'">'+steerLabel()+'</span></div>';
+}
+function wireToggles(suffix){
+  $("btnInvertY"+suffix).onclick=function(){ state.invertY=!state.invertY; this.textContent=pitchLabel(); };
+  $("btnInvertX"+suffix).onclick=function(){ state.invertX=!state.invertX; this.textContent=steerLabel(); };
+}
+
 function showTitle(){
   state.mode="title";
   if(!canyon){
     const L=LEVELS[0];
     sky=buildSky(L); scene.add(sky);
     canyon=buildCanyon(L); scene.add(canyon);
-    scene.fog=new THREE.Fog(L.fog,120,620);
+    applyEnvironment(L);
     state.levelIndex=0; state.z=200; state.yaw=0; state.pitch=0;
   }
   plane.visible=true;
@@ -763,16 +956,13 @@ function showTitle(){
   openPanel(
     '<div class="kicker">Low & Fast</div>'+
     '<h1>Canyon<br>Runner</h1>'+
-    '<p class="body">Five sectors of narrowing rock. Steer with the left stick, hold boost when the walls open up. Touching anything ends the run.</p>'+
+    '<p class="body">Five sectors: a dark gorge, a sunlit mountain range, an orbital debris field, a lava cave and an ice needle. Steer with the left stick, hold boost where it opens up. Touching anything ends the run.</p>'+
     '<button id="btnStart">Start Sector 01</button>'+
-    '<div class="row"><span class="toggle" id="btnInvert">Pitch: '+(state.invertY?"Pull back to climb":"Push forward to climb")+'</span></div>'+
+    toggleBlock("A")+
     pips()
   );
   $("btnStart").onclick=()=>loadLevel(0);
-  $("btnInvert").onclick=function(){
-    state.invertY=!state.invertY;
-    this.textContent="Pitch: "+(state.invertY?"Pull back to climb":"Push forward to climb");
-  };
+  wireToggles("A");
 }
 
 function showCrash(){
@@ -787,18 +977,22 @@ function showCrash(){
     '<button id="btnRetry">Fly again</button>'+
     '<div class="row"><button class="ghost" id="btnMenu">Sector select</button></div>'
   );
-  $("btnRetry").onclick=()=>{ plane.visible=true; loadLevel(state.levelIndex); };
+  $("btnRetry").onclick=()=>loadLevel(state.levelIndex);
   $("btnMenu").onclick=()=>{ plane.visible=true; showSelect(); };
 }
 
 function showCleared(){
   const L=LEVELS[state.levelIndex], next=LEVELS[state.levelIndex+1];
+  const hint={mountain:"wide open and bright — the peaks are scenery, the corridor is what matters",
+              space:"no horizon to judge height against, so trust the pitch ladder",
+              volcanic:"roofed and hot, watch your climb",
+              ice:"the narrowest run of the five"}[next.env] || "narrower than this one";
   openPanel(
     '<div class="kicker">Sector clear</div>'+
     '<h2>'+L.name+'</h2>'+
     '<div class="stats"><div class="stat"><b>'+fmtTime(state.time)+'</b><span>Time</span></div>'+
     '<div class="stat"><b>'+fmtTime(state.times[state.levelIndex])+'</b><span>Best</span></div></div>'+
-    '<p class="body">Next up: '+next.name+(next.cave?" — roofed, so watch your climb.":" — narrower than this one.")+'</p>'+
+    '<p class="body">Next up: '+next.name+' — '+hint+'.</p>'+
     '<button id="btnNext">Fly '+next.name+'</button>'+
     '<div class="row"><button class="ghost" id="btnAgain">Improve time</button>'+
     '<button class="ghost" id="btnMenu2">Sector select</button></div>'+
@@ -828,8 +1022,8 @@ function showSelect(){
   state.mode="title";
   let rows="";
   for(let i=0;i<LEVELS.length;i++){
-    const open = i<=state.unlocked;
-    rows+='<button class="ghost" data-lv="'+i+'"'+(open?"":" disabled style=\"opacity:.3\"")+'>'+
+    const open=i<=state.unlocked;
+    rows+='<button class="ghost" data-lv="'+i+'"'+(open?"":' disabled style="opacity:.3"')+'>'+
       String(i+1).padStart(2,"0")+" "+LEVELS[i].name+
       (state.times[i]!==null?" · "+fmtTime(state.times[i]):"")+'</button>';
   }
@@ -837,15 +1031,12 @@ function showSelect(){
     '<div class="kicker">Choose a sector</div>'+
     '<h2>Flight Plan</h2>'+
     '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:18px">'+rows+'</div>'+
-    '<div class="row"><span class="toggle" id="btnInvert2">Pitch: '+(state.invertY?"Pull back to climb":"Push forward to climb")+'</span></div>'
+    toggleBlock("B")
   );
   card.querySelectorAll("button[data-lv]").forEach(function(b){
-    b.onclick=()=>{ plane.visible=true; loadLevel(parseInt(b.dataset.lv,10)); };
+    b.onclick=()=>loadLevel(parseInt(b.dataset.lv,10));
   });
-  $("btnInvert2").onclick=function(){
-    state.invertY=!state.invertY;
-    this.textContent="Pitch: "+(state.invertY?"Pull back to climb":"Push forward to climb");
-  };
+  wireToggles("B");
 }
 
 function updateHUD(clearance){
@@ -877,9 +1068,7 @@ function bindControls(){
   let sid=null, cx=0, cy=0;
   const R=52;
 
-  function setKnob(dx,dy){
-    knob.style.transform="translate("+dx+"px,"+dy+"px)";
-  }
+  function setKnob(dx,dy){ knob.style.transform="translate("+dx+"px,"+dy+"px)"; }
   zone.addEventListener("pointerdown",function(e){
     if(sid!==null) return;
     sid=e.pointerId;
