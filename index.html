@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#150e14">
+<title>Canyon Runner</title>
+<style>
+  :root{
+    --ink:#150e14;
+    --rock:#b5643c;
+    --rock-deep:#6e3a2a;
+    --amber:#f5c45e;
+    --bone:#ede6da;
+    --alarm:#e2574c;
+    --display:"Avenir Next Condensed","Helvetica Neue",Impact,sans-serif;
+    --data:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --pad-t:env(safe-area-inset-top,0px);
+    --pad-b:env(safe-area-inset-bottom,0px);
+    --pad-l:env(safe-area-inset-left,0px);
+    --pad-r:env(safe-area-inset-right,0px);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;position:fixed;inset:0;background:var(--ink);
+    color:var(--bone);font-family:var(--data);touch-action:none;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none}
+  canvas{display:block;position:absolute;inset:0}
+
+  #hud{position:absolute;inset:0;pointer-events:none;
+    padding:calc(var(--pad-t) + 14px) calc(var(--pad-r) + 14px) calc(var(--pad-b) + 14px) calc(var(--pad-l) + 14px)}
+  .hidden{display:none !important}
+
+  /* ---- top-left telemetry ---- */
+  #telemetry{position:absolute;top:calc(var(--pad-t) + 14px);left:calc(var(--pad-l) + 16px)}
+  .eyebrow{font-family:var(--display);font-size:11px;letter-spacing:.32em;
+    text-transform:uppercase;color:var(--amber);opacity:.85}
+  #levelName{font-family:var(--display);font-size:26px;letter-spacing:.06em;
+    text-transform:uppercase;line-height:1.05;margin-top:2px}
+  #clock{font-size:13px;letter-spacing:.14em;opacity:.72;margin-top:4px}
+
+  /* ---- signature: bank & pitch ladder ---- */
+  #attitude{position:absolute;top:calc(var(--pad-t) + 12px);left:50%;transform:translateX(-50%);
+    width:190px;height:96px;opacity:.9}
+  #attitude svg{width:100%;height:100%;overflow:visible}
+
+  /* ---- depth rail ---- */
+  #rail{position:absolute;right:calc(var(--pad-r) + 16px);top:50%;transform:translateY(-50%);
+    width:3px;height:38vh;max-height:280px;background:rgba(237,230,218,.16);border-radius:2px}
+  #railFill{position:absolute;left:0;bottom:0;width:100%;height:0%;
+    background:linear-gradient(to top,var(--rock),var(--amber));border-radius:2px}
+  #railHead{position:absolute;right:9px;bottom:0;transform:translateY(50%);
+    font-size:10px;letter-spacing:.14em;color:var(--amber);white-space:nowrap}
+  #railLabel{position:absolute;right:0;top:-22px;font-family:var(--display);font-size:10px;
+    letter-spacing:.28em;text-transform:uppercase;opacity:.6}
+
+  /* ---- controls ---- */
+  #stickZone{position:absolute;left:0;bottom:0;width:52%;height:56%;pointer-events:auto}
+  #stickBase{position:absolute;width:132px;height:132px;border-radius:50%;
+    border:1px solid rgba(237,230,218,.22);background:rgba(21,14,20,.28);
+    left:calc(var(--pad-l) + 26px);bottom:calc(var(--pad-b) + 30px);
+    display:flex;align-items:center;justify-content:center;transition:opacity .2s}
+  #stickBase::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;
+    background:rgba(237,230,218,.3)}
+  #stickKnob{width:56px;height:56px;border-radius:50%;background:rgba(245,196,94,.16);
+    border:1.5px solid var(--amber);position:absolute;
+    box-shadow:0 0 22px rgba(245,196,94,.25)}
+
+  #boost{position:absolute;right:calc(var(--pad-r) + 26px);bottom:calc(var(--pad-b) + 40px);
+    width:96px;height:96px;border-radius:50%;pointer-events:auto;
+    border:1px solid rgba(245,196,94,.45);background:rgba(245,196,94,.08);
+    font-family:var(--display);font-size:13px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--amber);display:flex;align-items:center;justify-content:center}
+  #boost.on{background:rgba(245,196,94,.3);box-shadow:0 0 34px rgba(245,196,94,.4)}
+  #boost.dry{opacity:.35}
+  #speedBox{position:absolute;right:calc(var(--pad-r) + 26px);bottom:calc(var(--pad-b) + 150px);
+    width:96px;text-align:center}
+  #speed{font-family:var(--display);font-size:30px;letter-spacing:.02em;line-height:1}
+  #speedUnit{font-size:9px;letter-spacing:.28em;opacity:.55;text-transform:uppercase}
+  #boostBar{margin-top:9px;height:3px;background:rgba(237,230,218,.16);border-radius:2px;overflow:hidden}
+  #boostFill{height:100%;width:100%;background:var(--amber)}
+
+  /* ---- proximity vignette ---- */
+  #vignette{position:absolute;inset:0;opacity:0;pointer-events:none;
+    box-shadow:inset 0 0 120px 20px rgba(226,87,76,.75)}
+
+  /* ---- panels ---- */
+  #panel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(120% 90% at 50% 40%,rgba(21,14,20,.6),rgba(21,14,20,.94));
+    pointer-events:auto;padding:24px}
+  .card{width:100%;max-width:380px;text-align:center}
+  .kicker{font-family:var(--display);font-size:11px;letter-spacing:.36em;
+    text-transform:uppercase;color:var(--amber)}
+  h1{font-family:var(--display);font-weight:700;font-size:clamp(46px,15vw,74px);
+    letter-spacing:.02em;text-transform:uppercase;line-height:.88;margin:10px 0 14px}
+  h2{font-family:var(--display);font-weight:700;font-size:clamp(32px,10vw,46px);
+    letter-spacing:.03em;text-transform:uppercase;line-height:1;margin:10px 0 12px}
+  .body{font-size:13px;line-height:1.65;opacity:.72;max-width:300px;margin:0 auto}
+  .stats{display:flex;justify-content:center;gap:26px;margin:20px 0 4px}
+  .stat b{display:block;font-family:var(--display);font-size:26px;letter-spacing:.03em}
+  .stat span{font-size:9px;letter-spacing:.24em;text-transform:uppercase;opacity:.5}
+  button{font-family:var(--display);text-transform:uppercase;letter-spacing:.18em;
+    border-radius:2px;cursor:pointer;color:var(--ink);background:var(--amber);
+    border:none;font-size:15px;padding:15px 34px;margin-top:26px;font-weight:600}
+  button.ghost{background:transparent;color:var(--bone);border:1px solid rgba(237,230,218,.28);
+    font-size:12px;padding:12px 22px;margin-top:12px}
+  .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  #levelPips{display:flex;gap:6px;justify-content:center;margin-top:22px}
+  .pip{width:22px;height:2px;background:rgba(237,230,218,.22)}
+  .pip.done{background:var(--amber)}
+  .toggle{margin-top:20px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    opacity:.55;cursor:pointer;display:inline-block;border-bottom:1px dotted rgba(237,230,218,.4);
+    padding-bottom:2px}
+  @media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="telemetry" class="hidden">
+    <div class="eyebrow">Sector <span id="levelNum">01</span></div>
+    <div id="levelName">Ochre Run</div>
+    <div id="clock">00:00.0</div>
+  </div>
+
+  <div id="attitude" class="hidden">
+    <svg viewBox="-95 -48 190 96">
+      <path d="M-56 0 A56 56 0 0 1 56 0" fill="none" stroke="rgba(237,230,218,.22)" stroke-width="1"/>
+      <g stroke="rgba(237,230,218,.35)" stroke-width="1">
+        <line x1="0" y1="-56" x2="0" y2="-48"/>
+        <line x1="-39.6" y1="-39.6" x2="-34" y2="-34"/>
+        <line x1="39.6" y1="-39.6" x2="34" y2="-34"/>
+        <line x1="-56" y1="0" x2="-49" y2="0"/>
+        <line x1="56" y1="0" x2="49" y2="0"/>
+      </g>
+      <g id="bankNeedle">
+        <polygon points="0,-52 -5,-43 5,-43" fill="#f5c45e"/>
+      </g>
+      <g id="ladder">
+        <line x1="-26" y1="0" x2="26" y2="0" stroke="#f5c45e" stroke-width="1.4" opacity=".9"/>
+        <line x1="-16" y1="-14" x2="16" y2="-14" stroke="rgba(237,230,218,.4)" stroke-width="1"/>
+        <line x1="-16" y1="14" x2="16" y2="14" stroke="rgba(237,230,218,.4)" stroke-width="1"/>
+      </g>
+      <path d="M-14 22 L0 14 L14 22" fill="none" stroke="#ede6da" stroke-width="1.6"/>
+    </svg>
+  </div>
+
+  <div id="rail" class="hidden">
+    <div id="railLabel">Depth</div>
+    <div id="railFill"></div>
+    <div id="railHead">0%</div>
+  </div>
+
+  <div id="speedBox" class="hidden">
+    <div id="speed">0</div>
+    <div id="speedUnit">km/h</div>
+    <div id="boostBar"><div id="boostFill"></div></div>
+  </div>
+
+  <div id="stickZone" class="hidden">
+    <div id="stickBase"><div id="stickKnob"></div></div>
+  </div>
+  <div id="boost" class="hidden">Boost</div>
+
+  <div id="vignette"></div>
+
+  <div id="panel">
+    <div class="card" id="card"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   LEVELS
+   ============================================================ */
+const LEVELS = [
+  { name:"Ochre Run",     seed:1137, length:2100, speed:56, hw:34, hwv:5,
+    a1:45, f1:0.0050, a2:15, f2:0.0140, a3:12, f3:0.0090, a4:5, f4:0.0210,
+    density:0.010, cave:false, caveH:0,
+    sky:"#4a2a34", horizon:"#8d5240", fog:0x6b3b34, rock:[0.71,0.40,0.24], sun:0xffd9a8 },
+
+  { name:"Split Fault",   seed:2291, length:2400, speed:60, hw:30, hwv:6,
+    a1:58, f1:0.0055, a2:20, f2:0.0165, a3:15, f3:0.0100, a4:6, f4:0.0230,
+    density:0.015, cave:false, caveH:0,
+    sky:"#2f2440", horizon:"#7a4b52", fog:0x5a3a45, rock:[0.62,0.36,0.30], sun:0xffc9b0 },
+
+  { name:"The Long Dark", seed:3373, length:2500, speed:62, hw:27, hwv:4,
+    a1:52, f1:0.0060, a2:18, f2:0.0180, a3:12, f3:0.0110, a4:5, f4:0.0250,
+    density:0.017, cave:true,  caveH:58,
+    sky:"#12161f", horizon:"#2a3040", fog:0x1b2029, rock:[0.32,0.31,0.36], sun:0x9fb6d8 },
+
+  { name:"Emberwind",     seed:4457, length:2700, speed:66, hw:25, hwv:5,
+    a1:66, f1:0.0062, a2:24, f2:0.0190, a3:17, f3:0.0115, a4:7, f4:0.0260,
+    density:0.021, cave:false, caveH:0,
+    sky:"#3d1418", horizon:"#a8452a", fog:0x7a2f24, rock:[0.78,0.32,0.18], sun:0xffb27a },
+
+  { name:"Needle's Eye",  seed:5531, length:2900, speed:70, hw:22, hwv:4,
+    a1:70, f1:0.0068, a2:26, f2:0.0210, a3:18, f3:0.0125, a4:8, f4:0.0285,
+    density:0.026, cave:true,  caveH:52,
+    sky:"#0d1a1a", horizon:"#1f4440", fog:0x14322e, rock:[0.26,0.44,0.40], sun:0xb8f0dc }
+];
+
+const PLANE_R      = 2.6;
+const YAW_RATE     = 1.35;
+const PITCH_RATE   = 1.05;
+const YAW_LIMIT    = 1.00;
+const PITCH_LIMIT  = 0.58;
+const BOOST_ADD    = 42;
+const BOOST_DRAIN  = 0.34;
+const BOOST_REGEN  = 0.17;
+const WALL_H       = 135;
+const SEG          = 4;
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let scene, camera, renderer, clock;
+let canyon = null, plane = null, dust = null, debris = null, sky = null;
+let sunLight, hemiLight;
+
+const state = {
+  mode:"title",          // title | flying | crashed | cleared | victory
+  levelIndex:0,
+  unlocked:0,
+  z:0, x:0, y:0,
+  yaw:0, pitch:0, roll:0,
+  speed:0, boostFuel:1, boosting:false,
+  time:0, crashes:0, deathTimer:0,
+  invertY:true,
+  times:new Array(LEVELS.length).fill(null),
+  shake:0
+};
+
+const input = { sx:0, sy:0, boost:false, keys:Object.create(null) };
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function rng(seed){ let s=seed>>>0; return function(){ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+function centerX(z,L){ return Math.sin(z*L.f1)*L.a1 + Math.sin(z*L.f2+1.7)*L.a2; }
+function floorY(z,L){ return Math.sin(z*L.f3+0.5)*L.a3 + Math.sin(z*L.f4+2.2)*L.a4; }
+function halfWidth(z,L){ return L.hw + Math.sin(z*0.0031+0.9)*L.hwv; }
+function ridge(z,side){ return Math.sin(z*0.052+side*2.3)*2.4 + Math.sin(z*0.017+side)*5.5; }
+
+function fmtTime(t){
+  const m=Math.floor(t/60), s=Math.floor(t%60), d=Math.floor((t*10)%10);
+  return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")+"."+d;
+}
+
+/* ============================================================
+   CANYON BUILD
+   ============================================================ */
+function buildCanyon(L){
+  const rand = rng(L.seed);
+  const pos=[], col=[];
+  const c=new THREE.Color();
+
+  function push(x,y,z,shade){
+    pos.push(x,y,z);
+    const n = 0.82 + shade*0.36;
+    col.push(L.rock[0]*n, L.rock[1]*n, L.rock[2]*n);
+  }
+  function quad(a,b,d,e){
+    push(a[0],a[1],a[2],a[3]); push(b[0],b[1],b[2],b[3]); push(d[0],d[1],d[2],d[3]);
+    push(a[0],a[1],a[2],a[3]); push(d[0],d[1],d[2],d[3]); push(e[0],e[1],e[2],e[3]);
+  }
+
+  const steps = Math.floor(L.length/SEG)+40;
+  let prev=null;
+  for(let i=0;i<steps;i++){
+    const z=i*SEG;
+    const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
+    const lx = cx-hw - Math.abs(ridge(z,0))*0.35;
+    const rx = cx+hw + Math.abs(ridge(z,1))*0.35;
+    const topL = fy + WALL_H + ridge(z,0)*2.2;
+    const topR = fy + WALL_H + ridge(z,1)*2.2;
+    const cur = {z, cx, fy, hw, lx, rx, topL, topR,
+                 fl:fy+Math.sin(z*0.09)*0.7, fr:fy+Math.sin(z*0.09+1.3)*0.7};
+
+    if(prev){
+      // floor
+      quad([prev.lx,prev.fl,prev.z,0.15],[cur.lx,cur.fl,cur.z,0.15],
+           [cur.rx,cur.fr,cur.z,0.25],[prev.rx,prev.fr,prev.z,0.25]);
+      // left wall (inward face)
+      quad([prev.lx,prev.fl,prev.z,0.0],[prev.lx-4,prev.topL,prev.z,1.0],
+           [cur.lx-4,cur.topL,cur.z,1.0],[cur.lx,cur.fl,cur.z,0.0]);
+      // right wall
+      quad([prev.rx,prev.fr,prev.z,0.0],[cur.rx,cur.fr,cur.z,0.0],
+           [cur.rx+4,cur.topR,cur.z,1.0],[prev.rx+4,prev.topR,prev.z,1.0]);
+      // plateaus
+      quad([prev.lx-4,prev.topL,prev.z,0.9],[prev.lx-320,prev.topL+14,prev.z,0.6],
+           [cur.lx-320,cur.topL+14,cur.z,0.6],[cur.lx-4,cur.topL,cur.z,0.9]);
+      quad([prev.rx+4,prev.topR,prev.z,0.9],[cur.rx+4,cur.topR,cur.z,0.9],
+           [cur.rx+320,cur.topR+14,cur.z,0.6],[prev.rx+320,prev.topR+14,prev.z,0.6]);
+      // cave roof
+      if(L.cave){
+        const rh = L.caveH + Math.sin(z*0.021)*5;
+        const rhp = L.caveH + Math.sin(prev.z*0.021)*5;
+        quad([prev.lx,prev.fl+rhp,prev.z,0.55],[prev.rx,prev.fr+rhp,prev.z,0.45],
+             [cur.rx,cur.fr+rh,cur.z,0.45],[cur.lx,cur.fl+rh,cur.z,0.55]);
+      }
+    }
+    prev=cur;
+  }
+
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true,side:THREE.DoubleSide});
+  const mesh=new THREE.Mesh(geo,mat);
+
+  const group=new THREE.Group();
+  group.add(mesh);
+
+  /* ---- obstacles ---- */
+  const obstacles=[], bins=new Map();
+  const rockMat=new THREE.MeshLambertMaterial({
+    color:new THREE.Color(L.rock[0]*0.85,L.rock[1]*0.85,L.rock[2]*0.85), flatShading:true});
+  const pillarGeo=new THREE.CylinderGeometry(1,1.35,1,7,1);
+  const boulderGeo=new THREE.IcosahedronGeometry(1,0);
+
+  let z=140;
+  while(z < L.length-90){
+    z += 26 + rand()*(1/L.density)*0.55;
+    if(z>=L.length-90) break;
+    const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
+    const roof = L.cave ? fy + L.caveH : fy + WALL_H;
+    const kind = rand();
+
+    if(kind<0.42){                                  // full column
+      const r = 3.2 + rand()*3.4;
+      const px = cx + (rand()*2-1)*(hw-r-6);
+      const h  = roof - fy;
+      const m=new THREE.Mesh(pillarGeo,rockMat);
+      m.scale.set(r,h,r); m.position.set(px,fy+h/2,z);
+      m.rotation.y=rand()*3;
+      group.add(m);
+      obstacles.push({t:0,x:px,z:z,r:r,y0:-1e5,y1:1e5});
+    } else if(kind<0.72){                           // stalagmite / stalactite spike
+      const r = 3.0 + rand()*3.0;
+      const h = 16 + rand()*26;
+      const px = cx + (rand()*2-1)*(hw-r-5);
+      const down = L.cave && rand()<0.55;
+      const m=new THREE.Mesh(pillarGeo,rockMat);
+      if(down){
+        m.scale.set(r,h,r); m.position.set(px,roof-h/2,z); m.rotation.z=Math.PI;
+        obstacles.push({t:0,x:px,z:z,r:r,y0:roof-h,y1:1e5});
+      }else{
+        m.scale.set(r,h,r); m.position.set(px,fy+h/2,z);
+        obstacles.push({t:0,x:px,z:z,r:r,y0:-1e5,y1:fy+h});
+      }
+      m.rotation.y=rand()*3;
+      group.add(m);
+    } else {                                        // floating boulder
+      const r = 4.0 + rand()*4.0;
+      const px = cx + (rand()*2-1)*(hw-r-4);
+      const py = fy + 8 + rand()*Math.max(10,(roof-fy)-20);
+      const m=new THREE.Mesh(boulderGeo,rockMat);
+      m.scale.set(r,r*0.82,r); m.position.set(px,py,z);
+      m.rotation.set(rand()*3,rand()*3,rand()*3);
+      group.add(m);
+      obstacles.push({t:1,x:px,y:py,z:z,r:r});
+    }
+  }
+  for(const o of obstacles){
+    const k=Math.floor(o.z/60);
+    if(!bins.has(k)) bins.set(k,[]);
+    bins.get(k).push(o);
+  }
+
+  group.userData={L,obstacles,bins};
+  return group;
+}
+
+/* ============================================================
+   PLANE
+   ============================================================ */
+function buildPlane(){
+  const g=new THREE.Group();
+  const body=new THREE.MeshLambertMaterial({color:0xede6da,flatShading:true});
+  const trim=new THREE.MeshLambertMaterial({color:0xe2574c,flatShading:true});
+  const dark=new THREE.MeshLambertMaterial({color:0x3a2e33,flatShading:true});
+
+  const fus=new THREE.Mesh(new THREE.CylinderGeometry(0.78,0.5,6.4,8),body);
+  fus.rotation.x=Math.PI/2; g.add(fus);
+
+  const nose=new THREE.Mesh(new THREE.ConeGeometry(0.78,1.9,8),trim);
+  nose.rotation.x=Math.PI/2; nose.position.z=4.1; g.add(nose);
+
+  const canopy=new THREE.Mesh(new THREE.SphereGeometry(0.62,8,6),dark);
+  canopy.scale.set(1,0.7,1.7); canopy.position.set(0,0.5,0.9); g.add(canopy);
+
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(9.6,0.24,2.1),body);
+  wing.position.z=0.2; g.add(wing);
+  const wtipL=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.5,1.5),trim);
+  wtipL.position.set(-4.8,0.1,0.2); g.add(wtipL);
+  const wtipR=wtipL.clone(); wtipR.position.x=4.8; g.add(wtipR);
+
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(3.4,0.2,1.3),body);
+  tail.position.z=-2.8; g.add(tail);
+  const fin=new THREE.Mesh(new THREE.BoxGeometry(0.2,1.7,1.5),trim);
+  fin.position.set(0,0.85,-2.9); g.add(fin);
+
+  const flame=new THREE.Mesh(new THREE.ConeGeometry(0.5,2.4,7),
+    new THREE.MeshBasicMaterial({color:0xf5c45e,transparent:true,opacity:0.85}));
+  flame.rotation.x=-Math.PI/2; flame.position.z=-4.2; flame.name="flame"; g.add(flame);
+
+  return g;
+}
+
+/* ============================================================
+   DUST + DEBRIS
+   ============================================================ */
+function buildDust(){
+  const n=420, p=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    p[i*3]  =(Math.random()*2-1)*70;
+    p[i*3+1]=(Math.random()*2-1)*50;
+    p[i*3+2]=Math.random()*320-60;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.BufferAttribute(p,3));
+  return new THREE.Points(g,new THREE.PointsMaterial(
+    {color:0xede6da,size:0.6,transparent:true,opacity:0.4,depthWrite:false}));
+}
+
+function buildDebris(){
+  const n=90, p=new Float32Array(n*3);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.BufferAttribute(p,3));
+  const pts=new THREE.Points(g,new THREE.PointsMaterial(
+    {color:0xf5c45e,size:1.5,transparent:true,opacity:1,depthWrite:false}));
+  pts.visible=false;
+  pts.userData.vel=new Float32Array(n*3);
+  return pts;
+}
+
+function burst(x,y,z){
+  const p=debris.geometry.attributes.position.array, v=debris.userData.vel;
+  for(let i=0;i<p.length;i+=3){
+    p[i]=x; p[i+1]=y; p[i+2]=z;
+    v[i]  =(Math.random()*2-1)*26;
+    v[i+1]=(Math.random()*2-1)*26;
+    v[i+2]=(Math.random()*2-1)*26;
+  }
+  debris.geometry.attributes.position.needsUpdate=true;
+  debris.visible=true;
+  debris.material.opacity=1;
+}
+
+/* ============================================================
+   SKY
+   ============================================================ */
+function buildSky(L){
+  const geo=new THREE.SphereGeometry(1400,16,10);
+  const mat=new THREE.ShaderMaterial({
+    side:THREE.BackSide, depthWrite:false, fog:false,
+    uniforms:{ top:{value:new THREE.Color(L.sky)}, bottom:{value:new THREE.Color(L.horizon)} },
+    vertexShader:"varying float h; void main(){ h=normalize(position).y; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
+    fragmentShader:"varying float h; uniform vec3 top; uniform vec3 bottom; void main(){ gl_FragColor=vec4(mix(bottom,top,clamp(h*1.4+0.25,0.0,1.0)),1.0); }"
+  });
+  return new THREE.Mesh(geo,mat);
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+function init(){
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2200);
+  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.75));
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  document.body.insertBefore(renderer.domElement,document.getElementById("hud"));
+
+  hemiLight=new THREE.HemisphereLight(0xffffff,0x2a1a1a,0.55); scene.add(hemiLight);
+  sunLight=new THREE.DirectionalLight(0xffd9a8,0.95);
+  sunLight.position.set(-0.4,1,0.3); scene.add(sunLight);
+
+  dust=buildDust(); scene.add(dust);
+  debris=buildDebris(); scene.add(debris);
+  plane=buildPlane(); scene.add(plane);
+
+  clock=new THREE.Clock();
+  window.addEventListener("resize",onResize);
+  bindControls();
+  showTitle();
+  renderer.setAnimationLoop(tick);
+}
+
+function onResize(){
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+}
+
+/* ============================================================
+   LEVEL LIFECYCLE
+   ============================================================ */
+function loadLevel(i){
+  state.levelIndex=i;
+  const L=LEVELS[i];
+
+  if(canyon){ scene.remove(canyon); disposeGroup(canyon); }
+  if(sky){ scene.remove(sky); sky.geometry.dispose(); sky.material.dispose(); }
+
+  sky=buildSky(L); scene.add(sky);
+  canyon=buildCanyon(L); scene.add(canyon);
+  scene.fog=new THREE.Fog(L.fog, L.cave?60:120, L.cave?420:620);
+  sunLight.color.setHex(L.sun);
+  hemiLight.intensity = L.cave?0.35:0.55;
+
+  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+(L.cave?L.caveH*0.5:26);
+  state.yaw=0; state.pitch=0; state.roll=0;
+  state.speed=L.speed; state.boostFuel=1; state.time=0; state.deathTimer=0;
+  state.shake=0;
+  debris.visible=false;
+
+  plane.position.set(state.x,state.y,state.z);
+  plane.rotation.set(0,0,0);
+  placeCamera(true);
+
+  document.getElementById("levelNum").textContent=String(i+1).padStart(2,"0");
+  document.getElementById("levelName").textContent=L.name;
+  state.mode="flying";
+  showHUD(true);
+  hidePanel();
+}
+
+function disposeGroup(g){
+  g.traverse(function(o){
+    if(o.geometry) o.geometry.dispose();
+    if(o.material){ Array.isArray(o.material)?o.material.forEach(m=>m.dispose()):o.material.dispose(); }
+  });
+}
+
+/* ============================================================
+   FLIGHT
+   ============================================================ */
+function forwardVec(yaw,pitch,out){
+  const cp=Math.cos(pitch);
+  out.set(Math.sin(yaw)*cp, Math.sin(pitch), Math.cos(yaw)*cp);
+  return out;
+}
+const _fwd=new THREE.Vector3(), _tmp=new THREE.Vector3(), _look=new THREE.Vector3();
+
+function placeCamera(snap){
+  const back=18, up=6.2;
+  forwardVec(state.yaw, state.pitch*0.45, _fwd);
+  _tmp.set(state.x,state.y,state.z).addScaledVector(_fwd,-back);
+  _tmp.y += up;
+  if(snap) camera.position.copy(_tmp);
+  else camera.position.lerp(_tmp, 0.16);
+  forwardVec(state.yaw, state.pitch, _fwd);
+  _look.set(state.x,state.y,state.z).addScaledVector(_fwd,26);
+  camera.up.set(Math.sin(state.roll)*0.35,1,0);
+  camera.lookAt(_look);
+}
+
+function updateFlight(dt){
+  const L=LEVELS[state.levelIndex];
+
+  let sx=input.sx, sy=input.sy;
+  if(input.keys["ArrowLeft"]||input.keys["a"]) sx=-1;
+  if(input.keys["ArrowRight"]||input.keys["d"]) sx=1;
+  if(input.keys["ArrowUp"]||input.keys["w"]) sy=1;
+  if(input.keys["ArrowDown"]||input.keys["s"]) sy=-1;
+  const wantBoost = input.boost || !!input.keys["Shift"];
+
+  if(state.invertY) sy=-sy;
+
+  state.yaw   = clamp(state.yaw   + sx*YAW_RATE*dt,  -YAW_LIMIT, YAW_LIMIT);
+  state.pitch = clamp(state.pitch + sy*PITCH_RATE*dt,-PITCH_LIMIT,PITCH_LIMIT);
+  if(Math.abs(sy)<0.08) state.pitch = lerp(state.pitch,0,1.6*dt);
+  if(Math.abs(sx)<0.08) state.yaw   = lerp(state.yaw,0,0.8*dt);
+
+  state.roll = lerp(state.roll, -sx*0.95, 6*dt);
+
+  state.boosting = wantBoost && state.boostFuel>0.02;
+  state.boostFuel = clamp(state.boostFuel + (state.boosting?-BOOST_DRAIN:BOOST_REGEN)*dt, 0, 1);
+  const target = L.speed + (state.boosting?BOOST_ADD:0);
+  state.speed = lerp(state.speed, target, 2.4*dt);
+
+  forwardVec(state.yaw,state.pitch,_fwd);
+  state.x += _fwd.x*state.speed*dt;
+  state.y += _fwd.y*state.speed*dt;
+  state.z += _fwd.z*state.speed*dt;
+
+  plane.position.set(state.x,state.y,state.z);
+  plane.rotation.set(0,0,0);
+  plane.rotateY(state.yaw);
+  plane.rotateX(-state.pitch);
+  plane.rotateZ(state.roll);
+  const flame=plane.getObjectByName("flame");
+  flame.scale.set(1, state.boosting?1.9+Math.random()*0.4:0.9+Math.random()*0.2, 1);
+
+  state.time += dt;
+}
+
+function checkCollision(){
+  const L=LEVELS[state.levelIndex];
+  const cx=centerX(state.z,L), fy=floorY(state.z,L), hw=halfWidth(state.z,L);
+  const side = hw - Math.abs(state.x-cx);
+  const below = state.y - (fy+PLANE_R);
+  const ceil = L.cave ? (fy+L.caveH-PLANE_R) - state.y : (fy+WALL_H-PLANE_R) - state.y;
+
+  let clearance = Math.min(side, below, ceil);
+  if(side<PLANE_R || below<0 || ceil<0) return {hit:true, clearance:0};
+
+  const k=Math.floor(state.z/60);
+  for(let b=k-1;b<=k+1;b++){
+    const arr=canyon.userData.bins.get(b);
+    if(!arr) continue;
+    for(let i=0;i<arr.length;i++){
+      const o=arr[i];
+      const dx=state.x-o.x, dz=state.z-o.z;
+      if(o.t===0){
+        const d=Math.sqrt(dx*dx+dz*dz)-(o.r+PLANE_R);
+        if(state.y>o.y0 && state.y<o.y1){
+          if(d<0) return {hit:true, clearance:0};
+          clearance=Math.min(clearance,d);
+        }
+      } else {
+        const dy=state.y-o.y;
+        const d=Math.sqrt(dx*dx+dy*dy+dz*dz)-(o.r+PLANE_R);
+        if(d<0) return {hit:true, clearance:0};
+        clearance=Math.min(clearance,d);
+      }
+    }
+  }
+  return {hit:false, clearance:clearance};
+}
+
+/* ============================================================
+   LOOP
+   ============================================================ */
+function tick(){
+  const dt=Math.min(clock.getDelta(),0.05);
+
+  if(state.mode==="flying"){
+    updateFlight(dt);
+    const c=checkCollision();
+    if(c.hit) crash();
+    else updateHUD(c.clearance);
+
+    if(state.z >= LEVELS[state.levelIndex].length) clearLevel();
+  } else if(state.mode==="crashed"){
+    state.deathTimer+=dt;
+    state.shake=Math.max(0,state.shake-dt*2.2);
+    if(state.deathTimer>0.95 && !document.getElementById("panel").dataset.shown) showCrash();
+  } else if(state.mode==="title"){
+    state.z += 26*dt;
+    if(canyon){
+      const L=LEVELS[state.levelIndex];
+      state.x=centerX(state.z,L); state.y=floorY(state.z,L)+(L.cave?L.caveH*0.5:26);
+      plane.position.set(state.x,state.y,state.z);
+      plane.rotation.set(0,0,0);
+      if(state.z>L.length-200) state.z=0;
+    }
+  }
+
+  if(state.mode!=="crashed") placeCamera(false);
+  else {
+    camera.position.x += (Math.random()*2-1)*state.shake*1.4;
+    camera.position.y += (Math.random()*2-1)*state.shake*1.4;
+    _look.set(state.x,state.y,state.z);
+    camera.lookAt(_look);
+  }
+
+  if(sky) sky.position.copy(camera.position);
+
+  // dust scroll
+  const dp=dust.geometry.attributes.position.array;
+  for(let i=2;i<dp.length;i+=3){
+    if(dp[i] + dust.position.z < camera.position.z-40){ dp[i]+=340; }
+  }
+  dust.position.set(state.x, state.y, Math.floor(state.z/340)*340);
+  dust.geometry.attributes.position.needsUpdate=true;
+
+  if(debris.visible){
+    const p=debris.geometry.attributes.position.array, v=debris.userData.vel;
+    for(let i=0;i<p.length;i+=3){
+      p[i]+=v[i]*dt; p[i+1]+=v[i+1]*dt-9*dt; p[i+2]+=v[i+2]*dt;
+    }
+    debris.geometry.attributes.position.needsUpdate=true;
+    debris.material.opacity=Math.max(0,debris.material.opacity-dt*0.5);
+    if(debris.material.opacity<=0) debris.visible=false;
+  }
+
+  renderer.render(scene,camera);
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+function crash(){
+  if(state.mode!=="flying") return;
+  state.mode="crashed";
+  state.crashes++;
+  state.deathTimer=0;
+  state.shake=1;
+  burst(state.x,state.y,state.z);
+  plane.visible=false;
+  showHUD(false);
+  navigator.vibrate && navigator.vibrate(90);
+}
+
+function clearLevel(){
+  state.mode="cleared";
+  const i=state.levelIndex;
+  if(state.times[i]===null || state.time<state.times[i]) state.times[i]=state.time;
+  state.unlocked=Math.max(state.unlocked,i+1);
+  showHUD(false);
+  if(i+1>=LEVELS.length) showVictory(); else showCleared();
+}
+
+/* ============================================================
+   UI
+   ============================================================ */
+const $=id=>document.getElementById(id);
+const panel=$("panel"), card=$("card");
+
+function showHUD(on){
+  ["telemetry","attitude","rail","speedBox","stickZone","boost"].forEach(function(id){
+    $(id).classList.toggle("hidden",!on);
+  });
+  if(!on) $("vignette").style.opacity=0;
+}
+
+function hidePanel(){ panel.classList.add("hidden"); delete panel.dataset.shown; }
+function openPanel(html){
+  card.innerHTML=html;
+  panel.classList.remove("hidden");
+  panel.dataset.shown="1";
+}
+
+function pips(){
+  let h='<div id="levelPips">';
+  for(let i=0;i<LEVELS.length;i++) h+='<div class="pip'+(state.times[i]!==null?" done":"")+'"></div>';
+  return h+"</div>";
+}
+
+function showTitle(){
+  state.mode="title";
+  if(!canyon){
+    const L=LEVELS[0];
+    sky=buildSky(L); scene.add(sky);
+    canyon=buildCanyon(L); scene.add(canyon);
+    scene.fog=new THREE.Fog(L.fog,120,620);
+    state.levelIndex=0; state.z=200; state.yaw=0; state.pitch=0;
+  }
+  plane.visible=true;
+  showHUD(false);
+  openPanel(
+    '<div class="kicker">Low & Fast</div>'+
+    '<h1>Canyon<br>Runner</h1>'+
+    '<p class="body">Five sectors of narrowing rock. Steer with the left stick, hold boost when the walls open up. Touching anything ends the run.</p>'+
+    '<button id="btnStart">Start Sector 01</button>'+
+    '<div class="row"><span class="toggle" id="btnInvert">Pitch: '+(state.invertY?"Pull back to climb":"Push forward to climb")+'</span></div>'+
+    pips()
+  );
+  $("btnStart").onclick=()=>loadLevel(0);
+  $("btnInvert").onclick=function(){
+    state.invertY=!state.invertY;
+    this.textContent="Pitch: "+(state.invertY?"Pull back to climb":"Push forward to climb");
+  };
+}
+
+function showCrash(){
+  const L=LEVELS[state.levelIndex];
+  const pct=Math.round(clamp(state.z/L.length,0,1)*100);
+  openPanel(
+    '<div class="kicker">Sector '+String(state.levelIndex+1).padStart(2,"0")+' — '+L.name+'</div>'+
+    '<h2>Wreckage</h2>'+
+    '<p class="body">You made it '+pct+'% of the way down. Ease off the boost through the tight sections.</p>'+
+    '<div class="stats"><div class="stat"><b>'+pct+'%</b><span>Reached</span></div>'+
+    '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div></div>'+
+    '<button id="btnRetry">Fly again</button>'+
+    '<div class="row"><button class="ghost" id="btnMenu">Sector select</button></div>'
+  );
+  $("btnRetry").onclick=()=>{ plane.visible=true; loadLevel(state.levelIndex); };
+  $("btnMenu").onclick=()=>{ plane.visible=true; showSelect(); };
+}
+
+function showCleared(){
+  const L=LEVELS[state.levelIndex], next=LEVELS[state.levelIndex+1];
+  openPanel(
+    '<div class="kicker">Sector clear</div>'+
+    '<h2>'+L.name+'</h2>'+
+    '<div class="stats"><div class="stat"><b>'+fmtTime(state.time)+'</b><span>Time</span></div>'+
+    '<div class="stat"><b>'+fmtTime(state.times[state.levelIndex])+'</b><span>Best</span></div></div>'+
+    '<p class="body">Next up: '+next.name+(next.cave?" — roofed, so watch your climb.":" — narrower than this one.")+'</p>'+
+    '<button id="btnNext">Fly '+next.name+'</button>'+
+    '<div class="row"><button class="ghost" id="btnAgain">Improve time</button>'+
+    '<button class="ghost" id="btnMenu2">Sector select</button></div>'+
+    pips()
+  );
+  $("btnNext").onclick=()=>loadLevel(state.levelIndex+1);
+  $("btnAgain").onclick=()=>loadLevel(state.levelIndex);
+  $("btnMenu2").onclick=()=>showSelect();
+}
+
+function showVictory(){
+  let total=0, all=true;
+  state.times.forEach(t=>{ if(t===null) all=false; else total+=t; });
+  openPanel(
+    '<div class="kicker">All sectors down</div>'+
+    '<h2>Clean Run</h2>'+
+    '<div class="stats"><div class="stat"><b>'+(all?fmtTime(total):"—")+'</b><span>Total</span></div>'+
+    '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div></div>'+
+    '<p class="body">Needle\'s Eye is behind you. Go back and shave time off the earlier sectors.</p>'+
+    '<button id="btnMenu3">Sector select</button>'+
+    pips()
+  );
+  $("btnMenu3").onclick=()=>showSelect();
+}
+
+function showSelect(){
+  state.mode="title";
+  let rows="";
+  for(let i=0;i<LEVELS.length;i++){
+    const open = i<=state.unlocked;
+    rows+='<button class="ghost" data-lv="'+i+'"'+(open?"":" disabled style=\"opacity:.3\"")+'>'+
+      String(i+1).padStart(2,"0")+" "+LEVELS[i].name+
+      (state.times[i]!==null?" · "+fmtTime(state.times[i]):"")+'</button>';
+  }
+  openPanel(
+    '<div class="kicker">Choose a sector</div>'+
+    '<h2>Flight Plan</h2>'+
+    '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:18px">'+rows+'</div>'+
+    '<div class="row"><span class="toggle" id="btnInvert2">Pitch: '+(state.invertY?"Pull back to climb":"Push forward to climb")+'</span></div>'
+  );
+  card.querySelectorAll("button[data-lv]").forEach(function(b){
+    b.onclick=()=>{ plane.visible=true; loadLevel(parseInt(b.dataset.lv,10)); };
+  });
+  $("btnInvert2").onclick=function(){
+    state.invertY=!state.invertY;
+    this.textContent="Pitch: "+(state.invertY?"Pull back to climb":"Push forward to climb");
+  };
+}
+
+function updateHUD(clearance){
+  const L=LEVELS[state.levelIndex];
+  $("clock").textContent=fmtTime(state.time);
+  $("speed").textContent=Math.round(state.speed*3.6);
+  $("boostFill").style.width=(state.boostFuel*100).toFixed(0)+"%";
+  $("boost").classList.toggle("on",state.boosting);
+  $("boost").classList.toggle("dry",state.boostFuel<0.05);
+
+  const pct=clamp(state.z/L.length,0,1);
+  $("railFill").style.height=(pct*100)+"%";
+  $("railHead").style.bottom=(pct*100)+"%";
+  $("railHead").textContent=Math.round(pct*100)+"%";
+
+  $("bankNeedle").setAttribute("transform","rotate("+(state.roll*57.3).toFixed(1)+")");
+  $("ladder").setAttribute("transform",
+    "translate(0,"+(state.pitch*57.3*0.9).toFixed(1)+") rotate("+(-state.roll*57.3).toFixed(1)+")");
+
+  const danger=clamp(1-(clearance/16),0,1);
+  $("vignette").style.opacity=(danger*danger*0.85).toFixed(2);
+}
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+function bindControls(){
+  const zone=$("stickZone"), base=$("stickBase"), knob=$("stickKnob");
+  let sid=null, cx=0, cy=0;
+  const R=52;
+
+  function setKnob(dx,dy){
+    knob.style.transform="translate("+dx+"px,"+dy+"px)";
+  }
+  zone.addEventListener("pointerdown",function(e){
+    if(sid!==null) return;
+    sid=e.pointerId;
+    const r=base.getBoundingClientRect();
+    cx=r.left+r.width/2; cy=r.top+r.height/2;
+    zone.setPointerCapture(sid);
+    move(e);
+  });
+  function move(e){
+    if(e.pointerId!==sid) return;
+    let dx=e.clientX-cx, dy=e.clientY-cy;
+    const d=Math.hypot(dx,dy);
+    if(d>R){ dx=dx/d*R; dy=dy/d*R; }
+    setKnob(dx,dy);
+    input.sx=clamp(dx/R,-1,1);
+    input.sy=clamp(-dy/R,-1,1);
+  }
+  zone.addEventListener("pointermove",move);
+  function end(e){
+    if(e.pointerId!==sid) return;
+    sid=null; input.sx=0; input.sy=0; setKnob(0,0);
+  }
+  zone.addEventListener("pointerup",end);
+  zone.addEventListener("pointercancel",end);
+
+  const b=$("boost");
+  b.addEventListener("pointerdown",e=>{ e.preventDefault(); input.boost=true; });
+  ["pointerup","pointercancel","pointerleave"].forEach(ev=>
+    b.addEventListener(ev,()=>{ input.boost=false; }));
+
+  window.addEventListener("keydown",e=>{
+    input.keys[e.key]=true;
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].indexOf(e.key)>-1) e.preventDefault();
+  });
+  window.addEventListener("keyup",e=>{ input.keys[e.key]=false; });
+  document.addEventListener("gesturestart",e=>e.preventDefault());
+}
+
+init();
+})();
+</script>
+</body>
+</html>
