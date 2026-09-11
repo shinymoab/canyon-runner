@@ -291,6 +291,7 @@ const UPGRADE_TIERS = {
   tail:   [ {cost:0,   mul:1.00}, {cost:150,  mul:0.85}, {cost:400,  mul:0.70}, {cost:900,  mul:0.55}, {cost:1800, mul:0.42} ]
 };
 const UPGRADES_STORAGE_KEY = "canyonRunner.upgrades";
+const UPGRADE_FX_DURATION  = 0.6; // seconds the bought part bulges for on purchase, see playUpgradeFX()
 
 const SEG          = 4;
 
@@ -316,7 +317,8 @@ const state = {
   coins:0, lastCoins:0,
   // Upgrade multipliers, computed from state.upgrades each launch — see enterLaunch()
   dragMul:1, enginePowerMul:1, stallSpeedMul:1,
-  upgrades:{engine:0, wings:0, tail:0}
+  upgrades:{engine:0, wings:0, tail:0},
+  upgradeFxTimer:0, upgradeFxKey:null
 };
 
 // localStorage can throw (private browsing, quota, disabled) — never let a save/load
@@ -622,7 +624,49 @@ function buildPlane(){
     new THREE.MeshBasicMaterial({color:0xf5c45e,transparent:true,opacity:0.85}));
   flame.rotation.x=-Math.PI/2; flame.position.z=-4.2; flame.name="flame"; g.add(flame);
 
+  // Cached refs so applyUpgradeVisuals() can rescale/recolor tiered parts without a
+  // per-frame scene traversal — podL/podR/flame = Engine, wing/wtipL/wtipR = Wings,
+  // fin = Tail.
+  g.userData.parts={podL,podR,flame,wing,wtipL,wtipR,fin};
+  g.userData.baseWtipX=4.8;
+
   return g;
+}
+
+// Rescales/recolors the plane's Engine/Wings/Tail parts to match owned tiers, plus a
+// brief bulge-and-settle pulse on whichever part was just bought (state.upgradeFxKey/
+// upgradeFxTimer, set by playUpgradeFX() and ticked down in tick()). Called every frame
+// so the plane always reflects current tiers regardless of when they last changed.
+const FLAME_COLORS=[0xf5c45e,0xffb347,0xff8c42,0x5fc7ff,0xbfe9ff]; // amber -> hotter -> blue-white at max tier
+function applyUpgradeVisuals(){
+  const parts=plane.userData.parts;
+  if(!parts) return;
+  const eng=state.upgrades.engine, wng=state.upgrades.wings, tal=state.upgrades.tail;
+  const pulse = state.upgradeFxTimer>0 ? 1+Math.sin((state.upgradeFxTimer/UPGRADE_FX_DURATION)*Math.PI)*0.25 : 1;
+  const engPulse = state.upgradeFxKey==="engine" ? pulse : 1;
+  const wngPulse = state.upgradeFxKey==="wings"  ? pulse : 1;
+  const talPulse = state.upgradeFxKey==="tail"   ? pulse : 1;
+
+  const podScale=(1+eng*0.14)*engPulse;
+  parts.podL.scale.set(podScale,podScale,1+eng*0.10);
+  parts.podR.scale.set(podScale,podScale,1+eng*0.10);
+  parts.flame.material.color.setHex(FLAME_COLORS[eng]);
+
+  const span=(1+wng*0.09)*wngPulse;
+  parts.wing.scale.x=span;
+  parts.wtipL.position.x=-plane.userData.baseWtipX*span;
+  parts.wtipR.position.x= plane.userData.baseWtipX*span;
+  const tipColor = wng>=3 ? 0xf5c45e : 0xe2574c;
+  parts.wtipL.material.color.setHex(tipColor);
+
+  parts.fin.scale.y=(1+tal*0.18)*talPulse;
+}
+
+function playUpgradeFX(key){
+  burst(state.x,state.y,state.z);
+  state.upgradeFxTimer=UPGRADE_FX_DURATION;
+  state.upgradeFxKey=key;
+  navigator.vibrate && navigator.vibrate(40);
 }
 
 /* ============================================================
@@ -998,6 +1042,9 @@ function tick(){
     if(debris.material.opacity<=0) debris.visible=false;
   }
 
+  if(state.upgradeFxTimer>0) state.upgradeFxTimer=Math.max(0,state.upgradeFxTimer-dt);
+  applyUpgradeVisuals();
+
   renderer.render(scene,camera);
 }
 
@@ -1103,6 +1150,17 @@ const UPGRADE_LABELS = {engine:"Engine", wings:"Wings", tail:"Tail"};
 
 function showHangar(){
   state.mode="title";
+  // Dedicated showroom framing so the plane (and the purchase-pulse animation) actually
+  // reads clearly, regardless of wherever the camera was left before opening this screen —
+  // the panel background is fairly dark/opaque and the default title framing is too distant.
+  const L=LEVELS[state.levelIndex];
+  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+LAUNCH_HEIGHT;
+  state.yaw=0; state.pitch=0; state.roll=0;
+  plane.visible=true;
+  plane.position.set(state.x,state.y,state.z);
+  plane.rotation.set(0,0,0);
+  placeCamera(true);
+
   let rows="";
   for(const key in UPGRADE_TIERS){
     const tiers=UPGRADE_TIERS[key], cur=state.upgrades[key], maxed=cur>=tiers.length-1;
@@ -1129,6 +1187,7 @@ function showHangar(){
       state.coins-=next.cost;
       state.upgrades[key]=cur+1;
       saveCoins(); saveUpgrades();
+      playUpgradeFX(key); // bulge the bought part + a particle burst on the plane behind this panel
       showHangar(); // re-render in place so the new tier/cost/afford state is reflected
     };
   });
