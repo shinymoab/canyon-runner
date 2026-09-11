@@ -251,17 +251,20 @@ const YAW_RATE     = 0.85;  // was 1.35 — slowed for a more simulator-like, le
 const PITCH_RATE   = 0.70;  // was 1.05 — see above
 const YAW_LIMIT    = 1.00;
 const PITCH_LIMIT  = 0.58;
-const BOOST_ADD    = 42;   // now an m/s^2 thrust term, not a lerp-target offset — see updateFlight()
+const BOOST_ADD    = 8;    // was 42 — cut hard so base-tier boost can't out-thrust drag indefinitely
+                            // (see DRAG_COEFF/STALL_SPEED below); Engine upgrade is what makes
+                            // boost strong again via enginePowerMul. Validated with a standalone
+                            // physics-only simulator, not yet a real phone playtest.
 const BOOST_DRAIN  = 0.34;
 const BOOST_REGEN  = 0.17;
 
 /* ---- glide energy model + slingshot launch (all hand-tuned, flag changes for phone playtesting) ---- */
 const GRAVITY_PITCH_COEFF = 18;    // m/s^2 per rad of pitch: diving trades altitude for speed, climbing the reverse
-const DRAG_COEFF          = 0.045; // fraction of current speed bled per second
+const DRAG_COEFF          = 0.18;  // was 0.045 — base drag is now the main thing Tail upgrades cut
 const MIN_SPEED           = 8;
 const MAX_SPEED           = 130;
-const STALL_SPEED         = 22;    // below this, extra sink kicks in
-const STALL_SINK_COEFF    = 0.9;
+const STALL_SPEED         = 33;    // was 22 — below this, extra sink kicks in; Wings raises this margin
+const STALL_SINK_COEFF    = 1.5;   // was 0.9
 const LAUNCH_DRAG_R       = 130;   // px, slingshot pull-back radius before power maxes out
 const LAUNCH_PITCH_MAX    = PITCH_LIMIT;
 const LAUNCH_YAW_MAX      = YAW_LIMIT;
@@ -275,6 +278,19 @@ const RUN_BUILD_LENGTH    = 4000;  // m of terrain/obstacles generated per run r
 const COIN_PER_METRE      = 0.1;   // 1 coin per 10m flown
 const COIN_FINISH_BONUS   = 1.25;  // multiplier applied when a run ends by reaching the target distance, not a crash
 const COINS_STORAGE_KEY   = "canyonRunner.coins";
+
+/* ---- upgrade shop (Hangar) — tier 0 is the free starting tier, 1-4 are purchasable.
+   Costs/multipliers are a first pass, not yet balanced against real coin-earn rates
+   from playtesting — treat as tunable, same as the flight-feel constants above. ---- */
+const UPGRADE_TIERS = {
+  // Engine: stronger boost thrust (BOOST_ADD*mul) and higher launch speed (state.enginePowerMul)
+  engine: [ {cost:0,   mul:1.00}, {cost:150,  mul:1.15}, {cost:400,  mul:1.30}, {cost:900,  mul:1.50}, {cost:1800, mul:1.75} ],
+  // Wings: less stall-sensitive at low speed (lower multiplier on STALL_SPEED = more forgiving)
+  wings:  [ {cost:0,   mul:1.00}, {cost:150,  mul:0.85}, {cost:400,  mul:0.70}, {cost:900,  mul:0.55}, {cost:1800, mul:0.42} ],
+  // Tail: less drag (lower multiplier on DRAG_COEFF = longer glide for the same energy)
+  tail:   [ {cost:0,   mul:1.00}, {cost:150,  mul:0.85}, {cost:400,  mul:0.70}, {cost:900,  mul:0.55}, {cost:1800, mul:0.42} ]
+};
+const UPGRADES_STORAGE_KEY = "canyonRunner.upgrades";
 
 const SEG          = 4;
 
@@ -298,12 +314,13 @@ const state = {
   shake:0,
   launchDragging:false, launchPower:0, launchDx:0, launchDy:0,
   coins:0, lastCoins:0,
-  // PR3 prep: upgrade multipliers, applied at launch time — inert (1) until the upgrade shop lands
-  dragMul:1, enginePowerMul:1, stallSpeedMul:1
+  // Upgrade multipliers, computed from state.upgrades each launch — see enterLaunch()
+  dragMul:1, enginePowerMul:1, stallSpeedMul:1,
+  upgrades:{engine:0, wings:0, tail:0}
 };
 
 // localStorage can throw (private browsing, quota, disabled) — never let a save/load
-// failure take down the game, coins just won't persist that session.
+// failure take down the game, coins/upgrades just won't persist that session.
 function loadCoins(){
   try{
     const v=parseInt(localStorage.getItem(COINS_STORAGE_KEY),10);
@@ -312,6 +329,18 @@ function loadCoins(){
 }
 function saveCoins(){
   try{ localStorage.setItem(COINS_STORAGE_KEY,String(state.coins)); }catch(e){ /* ignore */ }
+}
+
+function loadUpgrades(){
+  try{
+    const v=JSON.parse(localStorage.getItem(UPGRADES_STORAGE_KEY));
+    const clamp5=n=>Number.isFinite(n) ? Math.max(0,Math.min(UPGRADE_TIERS.engine.length-1,n)) : 0;
+    if(v && typeof v==="object") return {engine:clamp5(v.engine), wings:clamp5(v.wings), tail:clamp5(v.tail)};
+  }catch(e){ /* ignore */ }
+  return {engine:0, wings:0, tail:0};
+}
+function saveUpgrades(){
+  try{ localStorage.setItem(UPGRADES_STORAGE_KEY,JSON.stringify(state.upgrades)); }catch(e){ /* ignore */ }
 }
 
 const input = { sx:0, sy:0, boost:false, keys:Object.create(null) };
@@ -475,7 +504,10 @@ function decorate(group,L,rand){
   for(let z=60; z<RUN_BUILD_LENGTH; z+=step*(0.6+rand()*0.8)){
     for(let side=-1; side<=1; side+=2){
       const cx=centerX(z,L), hw=halfWidth(z,L), fy=floorY(z,L);
-      const top = fy + L.wallH;
+      // Grounded scenery sits at floor height — there's no wall/rim left to perch it on
+      // since the open-glide rework removed wall geometry (used to be fy+L.wallH, which
+      // floated in mid-air with nothing visually supporting it once the walls were gone).
+      const top = fy;
       const base = cx + side*(hw + 40 + rand()*220);
 
       if(L.env==="mountain"){
@@ -490,11 +522,12 @@ function decorate(group,L,rand){
           group.add(cap);
         }
       } else if(L.env==="space"){
-        for(let k=0;k<2;k++){                          // drifting asteroid clusters
+        for(let k=0;k<2;k++){                          // drifting asteroid clusters — these
+                                                         // are meant to float, unlike grounded scenery
           const r=6+rand()*22;
           const a=new THREE.Mesh(rockGeo,outerMat);
           a.scale.set(r,r*(0.6+rand()*0.5),r);
-          a.position.set(base+(rand()*2-1)*70, top - 40 + rand()*220, z+(rand()*2-1)*90);
+          a.position.set(base+(rand()*2-1)*70, top+40+rand()*260, z+(rand()*2-1)*90);
           a.rotation.set(rand()*3,rand()*3,rand()*3);
           group.add(a);
         }
@@ -681,6 +714,7 @@ function buildSky(L){
    ============================================================ */
 function init(){
   state.coins=loadCoins();
+  state.upgrades=loadUpgrades();
 
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2400);
@@ -744,6 +778,9 @@ function enterLaunch(i){
   state.yaw=0; state.pitch=0; state.roll=0;
   state.speed=0; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
   state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
+  state.enginePowerMul=UPGRADE_TIERS.engine[state.upgrades.engine].mul;
+  state.stallSpeedMul=UPGRADE_TIERS.wings[state.upgrades.wings].mul;
+  state.dragMul=UPGRADE_TIERS.tail[state.upgrades.tail].mul;
   debris.visible=false;
   plane.visible=true;
   plane.position.set(state.x,state.y,state.z);
@@ -1055,10 +1092,47 @@ function showTitle(){
     toggleBlock("A")+
     pips()+
     '<p class="body" style="margin-top:14px">'+state.coins+' coins banked</p>'+
-    '<div class="row"><button class="ghost" id="btnShop" disabled>Hangar (coming soon)</button></div>'
+    '<div class="row"><button class="ghost" id="btnShop">Hangar</button></div>'
   );
   $("btnStart").onclick=()=>showSelect();
+  $("btnShop").onclick=()=>showHangar();
   wireToggles("A");
+}
+
+const UPGRADE_LABELS = {engine:"Engine", wings:"Wings", tail:"Tail"};
+
+function showHangar(){
+  state.mode="title";
+  let rows="";
+  for(const key in UPGRADE_TIERS){
+    const tiers=UPGRADE_TIERS[key], cur=state.upgrades[key], maxed=cur>=tiers.length-1;
+    const next=maxed?null:tiers[cur+1];
+    const afford=next && state.coins>=next.cost;
+    rows+='<button class="ghost" data-buy="'+key+'"'+(maxed||!afford?' disabled style="opacity:.3"':'')+'>'+
+      UPGRADE_LABELS[key].toUpperCase()+' · TIER '+(cur+1)+'/'+tiers.length+
+      (maxed?' · MAX':' · BUY '+next.cost)+
+      '</button>';
+  }
+  openPanel(
+    '<div class="kicker">Hangar</div>'+
+    '<h2>Upgrades</h2>'+
+    '<p class="body">'+state.coins+' coins</p>'+
+    '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:14px">'+rows+'</div>'+
+    '<div class="row"><button class="ghost" id="btnHangarBack">Back</button></div>'
+  );
+  card.querySelectorAll("button[data-buy]").forEach(function(b){
+    b.onclick=function(){
+      const key=b.dataset.buy, tiers=UPGRADE_TIERS[key], cur=state.upgrades[key];
+      if(cur>=tiers.length-1) return;
+      const next=tiers[cur+1];
+      if(state.coins<next.cost) return;
+      state.coins-=next.cost;
+      state.upgrades[key]=cur+1;
+      saveCoins(); saveUpgrades();
+      showHangar(); // re-render in place so the new tier/cost/afford state is reflected
+    };
+  });
+  $("btnHangarBack").onclick=()=>showTitle();
 }
 
 function showResults(){
@@ -1100,12 +1174,14 @@ function showSelect(){
     '<div class="kicker">Choose a biome</div>'+
     '<h2>Flight Plan</h2>'+
     '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:18px">'+rows+'</div>'+
-    toggleBlock("B")
+    toggleBlock("B")+
+    '<div class="row"><button class="ghost" id="btnShopFromSelect">Hangar</button></div>'
   );
   card.querySelectorAll("button[data-lv]").forEach(function(b){
     b.onclick=()=>enterLaunch(parseInt(b.dataset.lv,10));
   });
   wireToggles("B");
+  $("btnShopFromSelect").onclick=()=>showHangar();
 }
 
 function updateHUD(clearance){
