@@ -251,17 +251,20 @@ const YAW_RATE     = 0.85;  // was 1.35 — slowed for a more simulator-like, le
 const PITCH_RATE   = 0.70;  // was 1.05 — see above
 const YAW_LIMIT    = 1.00;
 const PITCH_LIMIT  = 0.58;
-const BOOST_ADD    = 42;   // now an m/s^2 thrust term, not a lerp-target offset — see updateFlight()
+const BOOST_ADD    = 8;    // was 42 — cut hard so base-tier boost can't out-thrust drag indefinitely
+                            // (see DRAG_COEFF/STALL_SPEED below); Engine upgrade is what makes
+                            // boost strong again via enginePowerMul. Validated with a standalone
+                            // physics-only simulator, not yet a real phone playtest.
 const BOOST_DRAIN  = 0.34;
 const BOOST_REGEN  = 0.17;
 
 /* ---- glide energy model + slingshot launch (all hand-tuned, flag changes for phone playtesting) ---- */
 const GRAVITY_PITCH_COEFF = 18;    // m/s^2 per rad of pitch: diving trades altitude for speed, climbing the reverse
-const DRAG_COEFF          = 0.045; // fraction of current speed bled per second
+const DRAG_COEFF          = 0.18;  // was 0.045 — base drag is now the main thing Tail upgrades cut
 const MIN_SPEED           = 8;
 const MAX_SPEED           = 130;
-const STALL_SPEED         = 22;    // below this, extra sink kicks in
-const STALL_SINK_COEFF    = 0.9;
+const STALL_SPEED         = 33;    // was 22 — below this, extra sink kicks in; Wings raises this margin
+const STALL_SINK_COEFF    = 1.5;   // was 0.9
 const LAUNCH_DRAG_R       = 130;   // px, slingshot pull-back radius before power maxes out
 const LAUNCH_PITCH_MAX    = PITCH_LIMIT;
 const LAUNCH_YAW_MAX      = YAW_LIMIT;
@@ -501,7 +504,10 @@ function decorate(group,L,rand){
   for(let z=60; z<RUN_BUILD_LENGTH; z+=step*(0.6+rand()*0.8)){
     for(let side=-1; side<=1; side+=2){
       const cx=centerX(z,L), hw=halfWidth(z,L), fy=floorY(z,L);
-      const top = fy + L.wallH;
+      // Grounded scenery sits at floor height — there's no wall/rim left to perch it on
+      // since the open-glide rework removed wall geometry (used to be fy+L.wallH, which
+      // floated in mid-air with nothing visually supporting it once the walls were gone).
+      const top = fy;
       const base = cx + side*(hw + 40 + rand()*220);
 
       if(L.env==="mountain"){
@@ -516,11 +522,12 @@ function decorate(group,L,rand){
           group.add(cap);
         }
       } else if(L.env==="space"){
-        for(let k=0;k<2;k++){                          // drifting asteroid clusters
+        for(let k=0;k<2;k++){                          // drifting asteroid clusters — these
+                                                         // are meant to float, unlike grounded scenery
           const r=6+rand()*22;
           const a=new THREE.Mesh(rockGeo,outerMat);
           a.scale.set(r,r*(0.6+rand()*0.5),r);
-          a.position.set(base+(rand()*2-1)*70, top - 40 + rand()*220, z+(rand()*2-1)*90);
+          a.position.set(base+(rand()*2-1)*70, top+40+rand()*260, z+(rand()*2-1)*90);
           a.rotation.set(rand()*3,rand()*3,rand()*3);
           group.add(a);
         }
@@ -1167,12 +1174,14 @@ function showSelect(){
     '<div class="kicker">Choose a biome</div>'+
     '<h2>Flight Plan</h2>'+
     '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:18px">'+rows+'</div>'+
-    toggleBlock("B")
+    toggleBlock("B")+
+    '<div class="row"><button class="ghost" id="btnShopFromSelect">Hangar</button></div>'
   );
   card.querySelectorAll("button[data-lv]").forEach(function(b){
     b.onclick=()=>enterLaunch(parseInt(b.dataset.lv,10));
   });
   wireToggles("B");
+  $("btnShopFromSelect").onclick=()=>showHangar();
 }
 
 function updateHUD(clearance){
