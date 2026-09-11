@@ -882,9 +882,13 @@ function tick(){
   if(state.mode==="flying"){
     updateFlight(dt);
     const c=checkCollision();
-    if(c.hit) crash(); else updateHUD(c.clearance);
-    const L=LEVELS[state.levelIndex];
-    if(state.z>=L.length && state.unlocked<=state.levelIndex) state.unlocked=state.levelIndex+1;
+    if(c.hit){
+      crash();
+    }else{
+      updateHUD(c.clearance);
+      const L=LEVELS[state.levelIndex];
+      if(state.z>=L.length) finishRun();
+    }
   } else if(state.mode==="launch"){
     if(state.launchDragging) setLaunchVisuals();
   } else if(state.mode==="crashed"){
@@ -902,12 +906,15 @@ function tick(){
     }
   }
 
-  if(state.mode!=="crashed") placeCamera(false);
-  else {
+  if(state.mode==="crashed"){
     camera.position.x += (Math.random()*2-1)*state.shake*1.4;
     camera.position.y += (Math.random()*2-1)*state.shake*1.4;
     _look.set(state.x,state.y,state.z);
     camera.lookAt(_look);
+  }else if(state.mode!=="launch"){
+    // Camera holds the static establishing shot set on entering "launch" (see enterLaunch)
+    // while aiming — it only starts panning/following again once flight actually begins.
+    placeCamera(false);
   }
 
   if(sky) sky.position.copy(camera.position);
@@ -949,6 +956,18 @@ function crash(){
   plane.visible=false;
   showHUD(false);
   navigator.vibrate && navigator.vibrate(90);
+}
+
+// Reaching a biome's target distance without crashing ends the run cleanly — unlocks the
+// next biome and shows results immediately (no death-timer delay, this isn't a wreck).
+function finishRun(){
+  if(state.mode!=="flying") return;
+  state.mode="finished";
+  const i=state.levelIndex;
+  if(state.unlocked<=i) state.unlocked=i+1;
+  if(state.bestDistance[i]===null || state.z>state.bestDistance[i]) state.bestDistance[i]=state.z;
+  showHUD(false);
+  showResults();
 }
 
 /* ============================================================
@@ -1014,12 +1033,15 @@ function showTitle(){
 function showResults(){
   const L=LEVELS[state.levelIndex], i=state.levelIndex;
   const dist=Math.round(state.z), best=Math.round(state.bestDistance[i]);
+  const clean = state.mode==="finished";
   const justUnlocked = state.unlocked===i+1 && state.z>=L.length;
   openPanel(
     '<div class="kicker">'+L.name+'</div>'+
-    '<h2>Wreckage</h2>'+
-    '<p class="body">You covered '+dist+'m before impact.'+
-      (justUnlocked?" Far enough to unlock the next biome.":"")+'</p>'+
+    '<h2>'+(clean?"Biome Cleared":"Wreckage")+'</h2>'+
+    '<p class="body">'+(clean
+      ? "You crossed the line at "+dist+"m."+(justUnlocked?" Next biome unlocked.":"")
+      : "You covered "+dist+"m before impact."+(justUnlocked?" Far enough to unlock the next biome.":""))+
+      '</p>'+
     '<div class="stats">'+
       '<div class="stat"><b>'+dist+'m</b><span>Distance</span></div>'+
       '<div class="stat"><b>'+best+'m</b><span>Best</span></div>'+
