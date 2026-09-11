@@ -276,6 +276,19 @@ const COIN_PER_METRE      = 0.1;   // 1 coin per 10m flown
 const COIN_FINISH_BONUS   = 1.25;  // multiplier applied when a run ends by reaching the target distance, not a crash
 const COINS_STORAGE_KEY   = "canyonRunner.coins";
 
+/* ---- upgrade shop (Hangar) — tier 0 is the free starting tier, 1-4 are purchasable.
+   Costs/multipliers are a first pass, not yet balanced against real coin-earn rates
+   from playtesting — treat as tunable, same as the flight-feel constants above. ---- */
+const UPGRADE_TIERS = {
+  // Engine: stronger boost thrust (BOOST_ADD*mul) and higher launch speed (state.enginePowerMul)
+  engine: [ {cost:0,   mul:1.00}, {cost:150,  mul:1.15}, {cost:400,  mul:1.30}, {cost:900,  mul:1.50}, {cost:1800, mul:1.75} ],
+  // Wings: less stall-sensitive at low speed (lower multiplier on STALL_SPEED = more forgiving)
+  wings:  [ {cost:0,   mul:1.00}, {cost:150,  mul:0.85}, {cost:400,  mul:0.70}, {cost:900,  mul:0.55}, {cost:1800, mul:0.42} ],
+  // Tail: less drag (lower multiplier on DRAG_COEFF = longer glide for the same energy)
+  tail:   [ {cost:0,   mul:1.00}, {cost:150,  mul:0.85}, {cost:400,  mul:0.70}, {cost:900,  mul:0.55}, {cost:1800, mul:0.42} ]
+};
+const UPGRADES_STORAGE_KEY = "canyonRunner.upgrades";
+
 const SEG          = 4;
 
 /* ============================================================
@@ -298,12 +311,13 @@ const state = {
   shake:0,
   launchDragging:false, launchPower:0, launchDx:0, launchDy:0,
   coins:0, lastCoins:0,
-  // PR3 prep: upgrade multipliers, applied at launch time — inert (1) until the upgrade shop lands
-  dragMul:1, enginePowerMul:1, stallSpeedMul:1
+  // Upgrade multipliers, computed from state.upgrades each launch — see enterLaunch()
+  dragMul:1, enginePowerMul:1, stallSpeedMul:1,
+  upgrades:{engine:0, wings:0, tail:0}
 };
 
 // localStorage can throw (private browsing, quota, disabled) — never let a save/load
-// failure take down the game, coins just won't persist that session.
+// failure take down the game, coins/upgrades just won't persist that session.
 function loadCoins(){
   try{
     const v=parseInt(localStorage.getItem(COINS_STORAGE_KEY),10);
@@ -312,6 +326,18 @@ function loadCoins(){
 }
 function saveCoins(){
   try{ localStorage.setItem(COINS_STORAGE_KEY,String(state.coins)); }catch(e){ /* ignore */ }
+}
+
+function loadUpgrades(){
+  try{
+    const v=JSON.parse(localStorage.getItem(UPGRADES_STORAGE_KEY));
+    const clamp5=n=>Number.isFinite(n) ? Math.max(0,Math.min(UPGRADE_TIERS.engine.length-1,n)) : 0;
+    if(v && typeof v==="object") return {engine:clamp5(v.engine), wings:clamp5(v.wings), tail:clamp5(v.tail)};
+  }catch(e){ /* ignore */ }
+  return {engine:0, wings:0, tail:0};
+}
+function saveUpgrades(){
+  try{ localStorage.setItem(UPGRADES_STORAGE_KEY,JSON.stringify(state.upgrades)); }catch(e){ /* ignore */ }
 }
 
 const input = { sx:0, sy:0, boost:false, keys:Object.create(null) };
@@ -681,6 +707,7 @@ function buildSky(L){
    ============================================================ */
 function init(){
   state.coins=loadCoins();
+  state.upgrades=loadUpgrades();
 
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2400);
@@ -744,6 +771,9 @@ function enterLaunch(i){
   state.yaw=0; state.pitch=0; state.roll=0;
   state.speed=0; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
   state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
+  state.enginePowerMul=UPGRADE_TIERS.engine[state.upgrades.engine].mul;
+  state.stallSpeedMul=UPGRADE_TIERS.wings[state.upgrades.wings].mul;
+  state.dragMul=UPGRADE_TIERS.tail[state.upgrades.tail].mul;
   debris.visible=false;
   plane.visible=true;
   plane.position.set(state.x,state.y,state.z);
@@ -1055,10 +1085,47 @@ function showTitle(){
     toggleBlock("A")+
     pips()+
     '<p class="body" style="margin-top:14px">'+state.coins+' coins banked</p>'+
-    '<div class="row"><button class="ghost" id="btnShop" disabled>Hangar (coming soon)</button></div>'
+    '<div class="row"><button class="ghost" id="btnShop">Hangar</button></div>'
   );
   $("btnStart").onclick=()=>showSelect();
+  $("btnShop").onclick=()=>showHangar();
   wireToggles("A");
+}
+
+const UPGRADE_LABELS = {engine:"Engine", wings:"Wings", tail:"Tail"};
+
+function showHangar(){
+  state.mode="title";
+  let rows="";
+  for(const key in UPGRADE_TIERS){
+    const tiers=UPGRADE_TIERS[key], cur=state.upgrades[key], maxed=cur>=tiers.length-1;
+    const next=maxed?null:tiers[cur+1];
+    const afford=next && state.coins>=next.cost;
+    rows+='<button class="ghost" data-buy="'+key+'"'+(maxed||!afford?' disabled style="opacity:.3"':'')+'>'+
+      UPGRADE_LABELS[key].toUpperCase()+' · TIER '+(cur+1)+'/'+tiers.length+
+      (maxed?' · MAX':' · BUY '+next.cost)+
+      '</button>';
+  }
+  openPanel(
+    '<div class="kicker">Hangar</div>'+
+    '<h2>Upgrades</h2>'+
+    '<p class="body">'+state.coins+' coins</p>'+
+    '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:14px">'+rows+'</div>'+
+    '<div class="row"><button class="ghost" id="btnHangarBack">Back</button></div>'
+  );
+  card.querySelectorAll("button[data-buy]").forEach(function(b){
+    b.onclick=function(){
+      const key=b.dataset.buy, tiers=UPGRADE_TIERS[key], cur=state.upgrades[key];
+      if(cur>=tiers.length-1) return;
+      const next=tiers[cur+1];
+      if(state.coins<next.cost) return;
+      state.coins-=next.cost;
+      state.upgrades[key]=cur+1;
+      saveCoins(); saveUpgrades();
+      showHangar(); // re-render in place so the new tier/cost/afford state is reflected
+    };
+  });
+  $("btnHangarBack").onclick=()=>showTitle();
 }
 
 function showResults(){
