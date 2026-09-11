@@ -85,9 +85,7 @@
     text-transform:uppercase;color:var(--amber);opacity:.85}
   #launchPad{position:absolute;left:50%;top:60%;width:14px;height:14px;border-radius:50%;
     border:1.5px solid rgba(237,230,218,.4);transform:translate(-50%,-50%)}
-  #launchArrow{position:absolute;left:50%;top:60%;width:4px;height:0px;background:var(--amber);
-    transform-origin:top center;transform:translate(-50%,-100%) rotate(0deg);
-    box-shadow:0 0 14px rgba(245,196,94,.5)}
+  #launchTrajSvg{position:absolute;inset:0;overflow:visible;pointer-events:none}
   #launchMeterBox{position:absolute;left:50%;bottom:calc(var(--pad-b) + 40px);
     transform:translateX(-50%);width:200px;text-align:center}
   #launchMeterBox .meterBar{height:5px}
@@ -170,8 +168,9 @@
 
   <div id="launchZone" class="hidden">
     <div id="launchHint">Drag back &amp; release to launch</div>
+    <svg id="launchTrajSvg"><path id="launchTrajPath" fill="none" stroke="#f5c45e" stroke-width="3"
+      stroke-linecap="round" opacity="0.9"/></svg>
     <div id="launchPad"></div>
-    <div id="launchArrow"></div>
     <div id="launchMeterBox">
       <div id="launchBar" class="meterBar"><div id="launchFill" class="meterFill"></div></div>
     </div>
@@ -248,8 +247,8 @@ const LEVELS = [
 ];
 
 const PLANE_R      = 2.6;
-const YAW_RATE     = 1.35;
-const PITCH_RATE   = 1.05;
+const YAW_RATE     = 0.85;  // was 1.35 — slowed for a more simulator-like, less twitchy turn (playtest feedback on PR #3)
+const PITCH_RATE   = 0.70;  // was 1.05 — see above
 const YAW_LIMIT    = 1.00;
 const PITCH_LIMIT  = 0.58;
 const BOOST_ADD    = 42;   // now an m/s^2 thrust term, not a lerp-target offset — see updateFlight()
@@ -292,7 +291,7 @@ const state = {
   invertY:true, invertX:true,
   bestDistance:new Array(LEVELS.length).fill(null),
   shake:0,
-  launchDragging:false, launchPower:0,
+  launchDragging:false, launchPower:0, launchDx:0, launchDy:0,
   // PR3 prep: upgrade multipliers, applied at launch time — inert (1) until the upgrade shop lands
   dragMul:1, enginePowerMul:1, stallSpeedMul:1
 };
@@ -724,7 +723,7 @@ function enterLaunch(i){
   state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+LAUNCH_HEIGHT;
   state.yaw=0; state.pitch=0; state.roll=0;
   state.speed=0; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
-  state.launchDragging=false; state.launchPower=0;
+  state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
   debris.visible=false;
   plane.visible=true;
   plane.position.set(state.x,state.y,state.z);
@@ -743,18 +742,24 @@ function enterLaunch(i){
 function releaseLaunch(){
   state.speed=clamp((LAUNCH_MIN_SPEED+state.launchPower*LAUNCH_POWER_RANGE)*state.enginePowerMul, MIN_SPEED, MAX_SPEED);
   state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
-  state.launchDragging=false; state.launchPower=0;
+  state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
   $("launchZone").classList.add("hidden");
   state.mode="flying";
   showHUD(true);
 }
 
+// Draws the pull-back trajectory preview as a curved line anchored at the launch pad,
+// regardless of drag angle (a straight div rotated+translated in CSS drifted off the
+// pad center at most angles — see PR #3 review). The curve bows upward like a simple
+// arc preview; it's a stylised aim indicator, not a physically projected flight path.
 function setLaunchVisuals(){
-  const dx=state.yaw/LAUNCH_YAW_MAX, dy=state.pitch/LAUNCH_PITCH_MAX;
-  const len=Math.hypot(dx,dy)*80;
-  const ang=Math.atan2(dx,dy)*57.3;
-  $("launchArrow").style.height=len+"px";
-  $("launchArrow").style.transform="translate(-50%,-100%) rotate("+ang.toFixed(1)+"deg)";
+  const padX=window.innerWidth*0.5, padY=window.innerHeight*0.6;
+  const endX=padX+state.launchDx, endY=padY+state.launchDy;
+  const midX=(padX+endX)/2, midY=(padY+endY)/2;
+  const bow=Math.hypot(state.launchDx,state.launchDy)*0.4;
+  $("launchTrajPath").setAttribute("d",
+    "M "+padX.toFixed(1)+" "+padY.toFixed(1)+
+    " Q "+midX.toFixed(1)+" "+(midY-bow).toFixed(1)+" "+endX.toFixed(1)+" "+endY.toFixed(1));
   $("launchFill").style.width=(state.launchPower*100).toFixed(0)+"%";
 }
 
@@ -802,10 +807,11 @@ function updateFlight(dt){
 
   state.yaw   = clamp(state.yaw   + sx*YAW_RATE*dt,  -YAW_LIMIT, YAW_LIMIT);
   state.pitch = clamp(state.pitch + sy*PITCH_RATE*dt,-PITCH_LIMIT,PITCH_LIMIT);
-  if(Math.abs(sy)<0.08) state.pitch = lerp(state.pitch,0,1.6*dt);
-  if(Math.abs(sx)<0.08) state.yaw   = lerp(state.yaw,0,0.8*dt);
+  // Auto-center and bank lerps slowed to match the calmer yaw/pitch rates above.
+  if(Math.abs(sy)<0.08) state.pitch = lerp(state.pitch,0,1.1*dt);
+  if(Math.abs(sx)<0.08) state.yaw   = lerp(state.yaw,0,0.55*dt);
 
-  state.roll = lerp(state.roll, -sx*0.95, 6*dt);
+  state.roll = lerp(state.roll, -sx*0.95, 4.5*dt);
 
   state.boosting = wantBoost && state.boostFuel>0.02;
   state.boostFuel = clamp(state.boostFuel + (state.boosting?-BOOST_DRAIN:BOOST_REGEN)*dt, 0, 1);
@@ -1128,6 +1134,7 @@ function bindControls(){
     state.yaw=clamp((dx/LAUNCH_DRAG_R)*LAUNCH_YAW_MAX,-YAW_LIMIT,YAW_LIMIT);
     state.pitch=clamp((dy/LAUNCH_DRAG_R)*LAUNCH_PITCH_MAX,-PITCH_LIMIT,PITCH_LIMIT);
     state.launchPower=clamp(Math.hypot(dx,dy)/LAUNCH_DRAG_R,0,1);
+    state.launchDx=dx; state.launchDy=dy;
   });
   function launchEnd(e){
     if(e.pointerId!==lid) return;
