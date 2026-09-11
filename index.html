@@ -1,4 +1,3 @@
-<!-- workflow test: safe to close, validates dev branch -> PR flow -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -73,11 +72,23 @@
     width:96px;text-align:center}
   #speed{font-family:var(--display);font-size:30px;letter-spacing:.02em;line-height:1}
   #speedUnit{font-size:9px;letter-spacing:.28em;opacity:.55;text-transform:uppercase}
-  #boostBar{margin-top:9px;height:3px;background:rgba(237,230,218,.16);border-radius:2px;overflow:hidden}
-  #boostFill{height:100%;width:100%;background:var(--amber)}
+
+  .meterBar{margin-top:9px;height:3px;background:rgba(237,230,218,.16);border-radius:2px;overflow:hidden}
+  .meterFill{height:100%;width:0%;background:var(--amber)}
 
   #vignette{position:absolute;inset:0;opacity:0;pointer-events:none;
     box-shadow:inset 0 0 120px 20px rgba(226,87,76,.75)}
+
+  #launchZone{position:absolute;inset:0;pointer-events:auto}
+  #launchHint{position:absolute;top:calc(var(--pad-t) + 14px);left:50%;transform:translateX(-50%);
+    text-align:center;font-family:var(--display);font-size:12px;letter-spacing:.28em;
+    text-transform:uppercase;color:var(--amber);opacity:.85}
+  #launchPad{position:absolute;left:50%;top:60%;width:14px;height:14px;border-radius:50%;
+    border:1.5px solid rgba(237,230,218,.4);transform:translate(-50%,-50%)}
+  #launchTrajSvg{position:absolute;inset:0;overflow:visible;pointer-events:none}
+  #launchMeterBox{position:absolute;left:50%;bottom:calc(var(--pad-b) + 40px);
+    transform:translateX(-50%);width:200px;text-align:center}
+  #launchMeterBox .meterBar{height:5px}
 
   #panel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(120% 90% at 50% 40%,rgba(21,14,20,.6),rgba(21,14,20,.94));
@@ -139,7 +150,7 @@
   </div>
 
   <div id="rail" class="hidden">
-    <div id="railLabel">Depth</div>
+    <div id="railLabel">Next biome</div>
     <div id="railFill"></div>
     <div id="railHead">0%</div>
   </div>
@@ -147,13 +158,23 @@
   <div id="speedBox" class="hidden">
     <div id="speed">0</div>
     <div id="speedUnit">km/h</div>
-    <div id="boostBar"><div id="boostFill"></div></div>
+    <div id="boostBar" class="meterBar"><div id="boostFill" class="meterFill"></div></div>
   </div>
 
   <div id="stickZone" class="hidden">
     <div id="stickBase"><div id="stickKnob"></div></div>
   </div>
   <div id="boost" class="hidden">Boost</div>
+
+  <div id="launchZone" class="hidden">
+    <div id="launchHint">Drag back &amp; release to launch</div>
+    <svg id="launchTrajSvg"><path id="launchTrajPath" fill="none" stroke="#f5c45e" stroke-width="3"
+      stroke-linecap="round" opacity="0.9"/></svg>
+    <div id="launchPad"></div>
+    <div id="launchMeterBox">
+      <div id="launchBar" class="meterBar"><div id="launchFill" class="meterFill"></div></div>
+    </div>
+  </div>
 
   <div id="vignette"></div>
 
@@ -166,9 +187,16 @@
 "use strict";
 
 /* ============================================================
-   LEVELS  — each `env` drives terrain styling, decoration and sky
+   LEVELS  — selectable glide biomes. Each `env` drives terrain
+   styling, decoration and sky. Distances in metres, speeds in m/s.
+
+   `length` is the distance a single run must reach to unlock the
+   next biome (no longer a fixed sector length — runs end on crash).
+   `speed` is flavour text only (shown on biome-select), no longer a
+   live cruise target. `hw/hwv/wallH/cave/caveH` shape obstacle
+   spawning and decoration only — there are no walls/ceiling to
+   collide with in the open-glide loop.
    env: canyon | mountain | space | volcanic | ice
-   Distances in metres, speeds in metres/second.
    ============================================================ */
 const LEVELS = [
   { name:"Ochre Run", env:"canyon", seed:1137,
@@ -219,13 +247,30 @@ const LEVELS = [
 ];
 
 const PLANE_R      = 2.6;
-const YAW_RATE     = 1.35;
-const PITCH_RATE   = 1.05;
+const YAW_RATE     = 0.85;  // was 1.35 — slowed for a more simulator-like, less twitchy turn (playtest feedback on PR #3)
+const PITCH_RATE   = 0.70;  // was 1.05 — see above
 const YAW_LIMIT    = 1.00;
 const PITCH_LIMIT  = 0.58;
-const BOOST_ADD    = 42;
+const BOOST_ADD    = 42;   // now an m/s^2 thrust term, not a lerp-target offset — see updateFlight()
 const BOOST_DRAIN  = 0.34;
 const BOOST_REGEN  = 0.17;
+
+/* ---- glide energy model + slingshot launch (all hand-tuned, flag changes for phone playtesting) ---- */
+const GRAVITY_PITCH_COEFF = 18;    // m/s^2 per rad of pitch: diving trades altitude for speed, climbing the reverse
+const DRAG_COEFF          = 0.045; // fraction of current speed bled per second
+const MIN_SPEED           = 8;
+const MAX_SPEED           = 130;
+const STALL_SPEED         = 22;    // below this, extra sink kicks in
+const STALL_SINK_COEFF    = 0.9;
+const LAUNCH_DRAG_R       = 130;   // px, slingshot pull-back radius before power maxes out
+const LAUNCH_PITCH_MAX    = PITCH_LIMIT;
+const LAUNCH_YAW_MAX      = YAW_LIMIT;
+const LAUNCH_MIN_SPEED    = 30;
+const LAUNCH_POWER_RANGE  = 55;    // launch speed = LAUNCH_MIN_SPEED..+RANGE based on pull power
+const LAUNCH_HEIGHT       = 24;    // m above the floor at the launch pad
+const OPEN_FLOOR_PAD      = 180;   // m of floor ribbon either side of the corridor, replaces the old canyon walls
+const RUN_BUILD_LENGTH    = 4000;  // m of terrain/obstacles generated per run regardless of biome unlock distance
+
 const SEG          = 4;
 
 /* ============================================================
@@ -244,8 +289,11 @@ const state = {
   speed:0, boostFuel:1, boosting:false,
   time:0, crashes:0, deathTimer:0,
   invertY:true, invertX:true,
-  times:new Array(LEVELS.length).fill(null),
-  shake:0
+  bestDistance:new Array(LEVELS.length).fill(null),
+  shake:0,
+  launchDragging:false, launchPower:0, launchDx:0, launchDy:0,
+  // PR3 prep: upgrade multipliers, applied at launch time — inert (1) until the upgrade shop lands
+  dragMul:1, enginePowerMul:1, stallSpeedMul:1
 };
 
 const input = { sx:0, sy:0, boost:false, keys:Object.create(null) };
@@ -260,7 +308,6 @@ const lerp=(a,b,t)=>a+(b-a)*t;
 function centerX(z,L){ return Math.sin(z*L.f1)*L.a1 + Math.sin(z*L.f2+1.7)*L.a2; }
 function floorY(z,L){ return Math.sin(z*L.f3+0.5)*L.a3 + Math.sin(z*L.f4+2.2)*L.a4; }
 function halfWidth(z,L){ return L.hw + Math.sin(z*0.0031+0.9)*L.hwv; }
-function ridge(z,side){ return Math.sin(z*0.052+side*2.3)*2.4 + Math.sin(z*0.017+side)*5.5; }
 
 function fmtTime(t){
   const m=Math.floor(t/60), s=Math.floor(t%60), d=Math.floor((t*10)%10);
@@ -292,52 +339,21 @@ function buildCanyon(L){
     push(a[0],a[1],a[2],a[3]); push(d[0],d[1],d[2],d[3]); push(e[0],e[1],e[2],e[3]);
   }
 
-  const WALL_H=L.wallH;
-  const steps = Math.floor(L.length/SEG)+40;
+  // Open glide: no walls/ceiling — just a wide floor ribbon. hw+OPEN_FLOOR_PAD keeps the
+  // ribbon's edge past the fog/camera range even during hard lateral drift.
+  const steps = Math.floor(RUN_BUILD_LENGTH/SEG)+40;
   let prev=null;
   for(let i=0;i<steps;i++){
     const z=i*SEG;
     const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
-    const lx = cx-hw - Math.abs(ridge(z,0))*0.35;
-    const rx = cx+hw + Math.abs(ridge(z,1))*0.35;
-    const topL = fy + WALL_H + ridge(z,0)*2.2;
-    const topR = fy + WALL_H + ridge(z,1)*2.2;
-    // mid-height break gives the walls a two-stage silhouette rather than one flat face
-    const midL = fy + WALL_H*0.42 + Math.sin(z*0.031)*6;
-    const midR = fy + WALL_H*0.42 + Math.sin(z*0.031+2.1)*6;
-    const mlx = lx - 7 - Math.sin(z*0.026)*3;
-    const mrx = rx + 7 + Math.sin(z*0.026+1.4)*3;
-    const cur = {z, cx, fy, hw, lx, rx, topL, topR, midL, midR, mlx, mrx,
+    const lx = cx-hw-OPEN_FLOOR_PAD;
+    const rx = cx+hw+OPEN_FLOOR_PAD;
+    const cur = {z, cx, fy, hw, lx, rx,
                  fl:fy+Math.sin(z*0.09)*0.7, fr:fy+Math.sin(z*0.09+1.3)*0.7};
 
     if(prev){
       quad([prev.lx,prev.fl,prev.z,0.15],[cur.lx,cur.fl,cur.z,0.15],
            [cur.rx,cur.fr,cur.z,0.25],[prev.rx,prev.fr,prev.z,0.25]);
-
-      // left wall, lower then upper stage
-      quad([prev.lx,prev.fl,prev.z,0.0],[prev.mlx,prev.midL,prev.z,0.55],
-           [cur.mlx,cur.midL,cur.z,0.55],[cur.lx,cur.fl,cur.z,0.0]);
-      quad([prev.mlx,prev.midL,prev.z,0.55],[prev.lx-4,prev.topL,prev.z,1.0],
-           [cur.lx-4,cur.topL,cur.z,1.0],[cur.mlx,cur.midL,cur.z,0.55]);
-
-      // right wall, lower then upper stage
-      quad([prev.rx,prev.fr,prev.z,0.0],[cur.rx,cur.fr,cur.z,0.0],
-           [cur.mrx,cur.midR,cur.z,0.55],[prev.mrx,prev.midR,prev.z,0.55]);
-      quad([prev.mrx,prev.midR,prev.z,0.55],[cur.mrx,cur.midR,cur.z,0.55],
-           [cur.rx+4,cur.topR,cur.z,1.0],[prev.rx+4,prev.topR,prev.z,1.0]);
-
-      // plateaus / outer slopes
-      quad([prev.lx-4,prev.topL,prev.z,0.9],[prev.lx-340,prev.topL+16,prev.z,0.6],
-           [cur.lx-340,cur.topL+16,cur.z,0.6],[cur.lx-4,cur.topL,cur.z,0.9]);
-      quad([prev.rx+4,prev.topR,prev.z,0.9],[cur.rx+4,cur.topR,cur.z,0.9],
-           [cur.rx+340,cur.topR+16,cur.z,0.6],[prev.rx+340,prev.topR+16,prev.z,0.6]);
-
-      if(L.cave){
-        const rh = L.caveH + Math.sin(z*0.021)*5;
-        const rhp = L.caveH + Math.sin(prev.z*0.021)*5;
-        quad([prev.lx,prev.fl+rhp,prev.z,0.55],[prev.rx,prev.fr+rhp,prev.z,0.45],
-             [cur.rx,cur.fr+rh,cur.z,0.45],[cur.lx,cur.fl+rh,cur.z,0.55]);
-      }
     }
     prev=cur;
   }
@@ -362,10 +378,10 @@ function buildCanyon(L){
   const obGeo = (L.env==="ice") ? shardGeo : boulderGeo;
 
   let z=140;
-  while(z < L.length-90){
+  while(z < RUN_BUILD_LENGTH-90){
     z += 26 + rand()*(1/L.density)*0.55;
-    if(z>=L.length-90) break;
-    const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
+    if(z>=RUN_BUILD_LENGTH-90) break;
+    const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L)+OPEN_FLOOR_PAD;
     const roof = L.cave ? fy + L.caveH : fy + L.wallH;
     const kind = rand();
 
@@ -438,7 +454,7 @@ function decorate(group,L,rand){
   const shardGeo=new THREE.OctahedronGeometry(1,0);
 
   const step = (L.env==="mountain") ? 110 : 150;
-  for(let z=60; z<L.length; z+=step*(0.6+rand()*0.8)){
+  for(let z=60; z<RUN_BUILD_LENGTH; z+=step*(0.6+rand()*0.8)){
     for(let side=-1; side<=1; side+=2){
       const cx=centerX(z,L), hw=halfWidth(z,L), fy=floorY(z,L);
       const top = fy + L.wallH;
@@ -484,7 +500,7 @@ function decorate(group,L,rand){
   if(L.env==="volcanic"){
     const glow=new THREE.MeshBasicMaterial({color:0xff7a2a,transparent:true,opacity:0.85});
     const stripGeo=new THREE.PlaneGeometry(1,1);
-    for(let z=80; z<L.length; z+=40+rand()*90){
+    for(let z=80; z<RUN_BUILD_LENGTH; z+=40+rand()*90){
       const cx=centerX(z,L), fy=floorY(z,L), hw=halfWidth(z,L);
       const p=new THREE.Mesh(stripGeo,glow);
       p.rotation.x=-Math.PI/2;
@@ -690,20 +706,24 @@ function applyEnvironment(L){
   document.querySelector("meta[name=theme-color]").setAttribute("content",L.sky);
 }
 
-function loadLevel(i){
-  state.levelIndex=i;
+function loadBiomeScene(i){
   const L=LEVELS[i];
-
   if(canyon){ scene.remove(canyon); disposeGroup(canyon); }
   if(sky){ scene.remove(sky); disposeGroup(sky); }
-
   sky=buildSky(L); scene.add(sky);
   canyon=buildCanyon(L); scene.add(canyon);
   applyEnvironment(L);
+  return L;
+}
 
-  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+(L.cave?L.caveH*0.5:28);
+function enterLaunch(i){
+  state.levelIndex=i;
+  const L=loadBiomeScene(i);
+
+  state.z=0; state.x=centerX(0,L); state.y=floorY(0,L)+LAUNCH_HEIGHT;
   state.yaw=0; state.pitch=0; state.roll=0;
-  state.speed=L.speed; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
+  state.speed=0; state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
+  state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
   debris.visible=false;
   plane.visible=true;
   plane.position.set(state.x,state.y,state.z);
@@ -712,9 +732,35 @@ function loadLevel(i){
 
   document.getElementById("levelNum").textContent=String(i+1).padStart(2,"0");
   document.getElementById("levelName").textContent=L.name;
+  state.mode="launch";
+  showHUD(false);
+  $("launchZone").classList.remove("hidden");
+  setLaunchVisuals();
+  hidePanel();
+}
+
+function releaseLaunch(){
+  state.speed=clamp((LAUNCH_MIN_SPEED+state.launchPower*LAUNCH_POWER_RANGE)*state.enginePowerMul, MIN_SPEED, MAX_SPEED);
+  state.boostFuel=1; state.time=0; state.deathTimer=0; state.shake=0;
+  state.launchDragging=false; state.launchPower=0; state.launchDx=0; state.launchDy=0;
+  $("launchZone").classList.add("hidden");
   state.mode="flying";
   showHUD(true);
-  hidePanel();
+}
+
+// Draws the pull-back trajectory preview as a curved line anchored at the launch pad,
+// regardless of drag angle (a straight div rotated+translated in CSS drifted off the
+// pad center at most angles — see PR #3 review). The curve bows upward like a simple
+// arc preview; it's a stylised aim indicator, not a physically projected flight path.
+function setLaunchVisuals(){
+  const padX=window.innerWidth*0.5, padY=window.innerHeight*0.6;
+  const endX=padX+state.launchDx, endY=padY+state.launchDy;
+  const midX=(padX+endX)/2, midY=(padY+endY)/2;
+  const bow=Math.hypot(state.launchDx,state.launchDy)*0.4;
+  $("launchTrajPath").setAttribute("d",
+    "M "+padX.toFixed(1)+" "+padY.toFixed(1)+
+    " Q "+midX.toFixed(1)+" "+(midY-bow).toFixed(1)+" "+endX.toFixed(1)+" "+endY.toFixed(1));
+  $("launchFill").style.width=(state.launchPower*100).toFixed(0)+"%";
 }
 
 function disposeGroup(g){
@@ -747,8 +793,6 @@ function placeCamera(snap){
 }
 
 function updateFlight(dt){
-  const L=LEVELS[state.levelIndex];
-
   let sx=input.sx, sy=input.sy;
   if(input.keys["ArrowLeft"]||input.keys["a"]) sx=-1;
   if(input.keys["ArrowRight"]||input.keys["d"]) sx=1;
@@ -763,14 +807,23 @@ function updateFlight(dt){
 
   state.yaw   = clamp(state.yaw   + sx*YAW_RATE*dt,  -YAW_LIMIT, YAW_LIMIT);
   state.pitch = clamp(state.pitch + sy*PITCH_RATE*dt,-PITCH_LIMIT,PITCH_LIMIT);
-  if(Math.abs(sy)<0.08) state.pitch = lerp(state.pitch,0,1.6*dt);
-  if(Math.abs(sx)<0.08) state.yaw   = lerp(state.yaw,0,0.8*dt);
+  // Auto-center and bank lerps slowed to match the calmer yaw/pitch rates above.
+  if(Math.abs(sy)<0.08) state.pitch = lerp(state.pitch,0,1.1*dt);
+  if(Math.abs(sx)<0.08) state.yaw   = lerp(state.yaw,0,0.55*dt);
 
-  state.roll = lerp(state.roll, -sx*0.95, 6*dt);
+  state.roll = lerp(state.roll, -sx*0.95, 4.5*dt);
 
   state.boosting = wantBoost && state.boostFuel>0.02;
   state.boostFuel = clamp(state.boostFuel + (state.boosting?-BOOST_DRAIN:BOOST_REGEN)*dt, 0, 1);
-  state.speed = lerp(state.speed, L.speed + (state.boosting?BOOST_ADD:0), 2.4*dt);
+
+  // Energy-based glide: pitch trades speed for altitude (and vice versa), drag bleeds
+  // speed continuously, boost is direct thrust, and stalling below STALL_SPEED adds sink.
+  state.speed += -GRAVITY_PITCH_COEFF*Math.sin(state.pitch)*dt;
+  state.speed -= DRAG_COEFF*state.dragMul*state.speed*dt;
+  if(state.boosting) state.speed += BOOST_ADD*state.enginePowerMul*dt;
+  const stallSpeed = STALL_SPEED*state.stallSpeedMul;
+  if(state.speed<stallSpeed) state.speed -= (stallSpeed-state.speed)*STALL_SINK_COEFF*dt;
+  state.speed = clamp(state.speed, MIN_SPEED, MAX_SPEED);
 
   forwardVec(state.yaw,state.pitch,_fwd);
   state.x += _fwd.x*state.speed*dt;
@@ -790,13 +843,11 @@ function updateFlight(dt){
 
 function checkCollision(){
   const L=LEVELS[state.levelIndex];
-  const cx=centerX(state.z,L), fy=floorY(state.z,L), hw=halfWidth(state.z,L);
-  const side = hw - Math.abs(state.x-cx);
+  const fy=floorY(state.z,L);
   const below = state.y - (fy+PLANE_R);
-  const ceil = L.cave ? (fy+L.caveH-PLANE_R) - state.y : (fy+L.wallH-PLANE_R) - state.y;
 
-  let clearance = Math.min(side,below,ceil);
-  if(side<PLANE_R || below<0 || ceil<0) return {hit:true, clearance:0};
+  let clearance = below;
+  if(below<0) return {hit:true, clearance:0};
 
   const k=Math.floor(state.z/60);
   for(let b=k-1;b<=k+1;b++){
@@ -831,12 +882,19 @@ function tick(){
   if(state.mode==="flying"){
     updateFlight(dt);
     const c=checkCollision();
-    if(c.hit) crash(); else updateHUD(c.clearance);
-    if(state.z >= LEVELS[state.levelIndex].length) clearLevel();
+    if(c.hit){
+      crash();
+    }else{
+      updateHUD(c.clearance);
+      const L=LEVELS[state.levelIndex];
+      if(state.z>=L.length) finishRun();
+    }
+  } else if(state.mode==="launch"){
+    if(state.launchDragging) setLaunchVisuals();
   } else if(state.mode==="crashed"){
     state.deathTimer+=dt;
     state.shake=Math.max(0,state.shake-dt*2.2);
-    if(state.deathTimer>0.95 && !document.getElementById("panel").dataset.shown) showCrash();
+    if(state.deathTimer>0.95 && !document.getElementById("panel").dataset.shown) showResults();
   } else if(state.mode==="title"){
     state.z += 26*dt;
     if(canyon){
@@ -848,12 +906,15 @@ function tick(){
     }
   }
 
-  if(state.mode!=="crashed") placeCamera(false);
-  else {
+  if(state.mode==="crashed"){
     camera.position.x += (Math.random()*2-1)*state.shake*1.4;
     camera.position.y += (Math.random()*2-1)*state.shake*1.4;
     _look.set(state.x,state.y,state.z);
     camera.lookAt(_look);
+  }else if(state.mode!=="launch"){
+    // Camera holds the static establishing shot set on entering "launch" (see enterLaunch)
+    // while aiming — it only starts panning/following again once flight actually begins.
+    placeCamera(false);
   }
 
   if(sky) sky.position.copy(camera.position);
@@ -889,19 +950,24 @@ function tick(){
 function crash(){
   if(state.mode!=="flying") return;
   state.mode="crashed"; state.crashes++; state.deathTimer=0; state.shake=1;
+  const i=state.levelIndex;
+  if(state.bestDistance[i]===null || state.z>state.bestDistance[i]) state.bestDistance[i]=state.z;
   burst(state.x,state.y,state.z);
   plane.visible=false;
   showHUD(false);
   navigator.vibrate && navigator.vibrate(90);
 }
 
-function clearLevel(){
-  state.mode="cleared";
+// Reaching a biome's target distance without crashing ends the run cleanly — unlocks the
+// next biome and shows results immediately (no death-timer delay, this isn't a wreck).
+function finishRun(){
+  if(state.mode!=="flying") return;
+  state.mode="finished";
   const i=state.levelIndex;
-  if(state.times[i]===null || state.time<state.times[i]) state.times[i]=state.time;
-  state.unlocked=Math.max(state.unlocked,i+1);
+  if(state.unlocked<=i) state.unlocked=i+1;
+  if(state.bestDistance[i]===null || state.z>state.bestDistance[i]) state.bestDistance[i]=state.z;
   showHUD(false);
-  if(i+1>=LEVELS.length) showVictory(); else showCleared();
+  showResults();
 }
 
 /* ============================================================
@@ -926,7 +992,7 @@ function openPanel(html){
 
 function pips(){
   let h='<div id="levelPips">';
-  for(let i=0;i<LEVELS.length;i++) h+='<div class="pip'+(state.times[i]!==null?" done":"")+'"></div>';
+  for(let i=0;i<LEVELS.length;i++) h+='<div class="pip'+(i<state.unlocked?" done":"")+'"></div>';
   return h+"</div>";
 }
 
@@ -946,10 +1012,7 @@ function wireToggles(suffix){
 function showTitle(){
   state.mode="title";
   if(!canyon){
-    const L=LEVELS[0];
-    sky=buildSky(L); scene.add(sky);
-    canyon=buildCanyon(L); scene.add(canyon);
-    applyEnvironment(L);
+    loadBiomeScene(0);
     state.levelIndex=0; state.z=200; state.yaw=0; state.pitch=0;
   }
   plane.visible=true;
@@ -957,85 +1020,59 @@ function showTitle(){
   openPanel(
     '<div class="kicker">Low & Fast</div>'+
     '<h1>Canyon<br>Runner</h1>'+
-    '<p class="body">Five sectors: a dark gorge, a sunlit mountain range, an orbital debris field, a lava cave and an ice needle. Steer with the left stick, hold boost where it opens up. Touching anything ends the run.</p>'+
-    '<button id="btnStart">Start Sector 01</button>'+
+    '<p class="body">Pull back and launch into open sky. Dive to gain speed, climb to trade it for altitude, and glide as far as you can before you go down. Push far enough into a biome to unlock the next.</p>'+
+    '<button id="btnStart">Choose a biome</button>'+
     toggleBlock("A")+
-    pips()
+    pips()+
+    '<div class="row"><button class="ghost" id="btnShop" disabled>Hangar (coming soon)</button></div>'
   );
-  $("btnStart").onclick=()=>loadLevel(0);
+  $("btnStart").onclick=()=>showSelect();
   wireToggles("A");
 }
 
-function showCrash(){
-  const L=LEVELS[state.levelIndex];
-  const pct=Math.round(clamp(state.z/L.length,0,1)*100);
+function showResults(){
+  const L=LEVELS[state.levelIndex], i=state.levelIndex;
+  const dist=Math.round(state.z), best=Math.round(state.bestDistance[i]);
+  const clean = state.mode==="finished";
+  const justUnlocked = state.unlocked===i+1 && state.z>=L.length;
   openPanel(
-    '<div class="kicker">Sector '+String(state.levelIndex+1).padStart(2,"0")+' — '+L.name+'</div>'+
-    '<h2>Wreckage</h2>'+
-    '<p class="body">You made it '+pct+'% of the way down. Ease off the boost through the tight sections.</p>'+
-    '<div class="stats"><div class="stat"><b>'+pct+'%</b><span>Reached</span></div>'+
-    '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div></div>'+
+    '<div class="kicker">'+L.name+'</div>'+
+    '<h2>'+(clean?"Biome Cleared":"Wreckage")+'</h2>'+
+    '<p class="body">'+(clean
+      ? "You crossed the line at "+dist+"m."+(justUnlocked?" Next biome unlocked.":"")
+      : "You covered "+dist+"m before impact."+(justUnlocked?" Far enough to unlock the next biome.":""))+
+      '</p>'+
+    '<div class="stats">'+
+      '<div class="stat"><b>'+dist+'m</b><span>Distance</span></div>'+
+      '<div class="stat"><b>'+best+'m</b><span>Best</span></div>'+
+      '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div>'+
+      // PR2 TODO: append a fourth .stat block here — coins earned = floor(distance/COIN_DISTANCE_DIVISOR), plus running total from state.coins
+    '</div>'+
     '<button id="btnRetry">Fly again</button>'+
-    '<div class="row"><button class="ghost" id="btnMenu">Sector select</button></div>'
+    '<div class="row"><button class="ghost" id="btnMenu">Change biome</button></div>'
   );
-  $("btnRetry").onclick=()=>loadLevel(state.levelIndex);
+  $("btnRetry").onclick=()=>enterLaunch(state.levelIndex);
   $("btnMenu").onclick=()=>{ plane.visible=true; showSelect(); };
-}
-
-function showCleared(){
-  const L=LEVELS[state.levelIndex], next=LEVELS[state.levelIndex+1];
-  const hint={mountain:"wide open and bright — the peaks are scenery, the corridor is what matters",
-              space:"no horizon to judge height against, so trust the pitch ladder",
-              volcanic:"roofed and hot, watch your climb",
-              ice:"the narrowest run of the five"}[next.env] || "narrower than this one";
-  openPanel(
-    '<div class="kicker">Sector clear</div>'+
-    '<h2>'+L.name+'</h2>'+
-    '<div class="stats"><div class="stat"><b>'+fmtTime(state.time)+'</b><span>Time</span></div>'+
-    '<div class="stat"><b>'+fmtTime(state.times[state.levelIndex])+'</b><span>Best</span></div></div>'+
-    '<p class="body">Next up: '+next.name+' — '+hint+'.</p>'+
-    '<button id="btnNext">Fly '+next.name+'</button>'+
-    '<div class="row"><button class="ghost" id="btnAgain">Improve time</button>'+
-    '<button class="ghost" id="btnMenu2">Sector select</button></div>'+
-    pips()
-  );
-  $("btnNext").onclick=()=>loadLevel(state.levelIndex+1);
-  $("btnAgain").onclick=()=>loadLevel(state.levelIndex);
-  $("btnMenu2").onclick=()=>showSelect();
-}
-
-function showVictory(){
-  let total=0, all=true;
-  state.times.forEach(t=>{ if(t===null) all=false; else total+=t; });
-  openPanel(
-    '<div class="kicker">All sectors down</div>'+
-    '<h2>Clean Run</h2>'+
-    '<div class="stats"><div class="stat"><b>'+(all?fmtTime(total):"—")+'</b><span>Total</span></div>'+
-    '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div></div>'+
-    '<p class="body">Needle\'s Eye is behind you. Go back and shave time off the earlier sectors.</p>'+
-    '<button id="btnMenu3">Sector select</button>'+
-    pips()
-  );
-  $("btnMenu3").onclick=()=>showSelect();
 }
 
 function showSelect(){
   state.mode="title";
   let rows="";
   for(let i=0;i<LEVELS.length;i++){
-    const open=i<=state.unlocked;
+    const open=i<=state.unlocked, dist=state.bestDistance[i];
     rows+='<button class="ghost" data-lv="'+i+'"'+(open?"":' disabled style="opacity:.3"')+'>'+
       String(i+1).padStart(2,"0")+" "+LEVELS[i].name+
-      (state.times[i]!==null?" · "+fmtTime(state.times[i]):"")+'</button>';
+      (open ? (dist!==null?" · "+Math.round(dist)+"m":"") : " · unlock at "+LEVELS[i-1].length+"m")+
+      '</button>';
   }
   openPanel(
-    '<div class="kicker">Choose a sector</div>'+
+    '<div class="kicker">Choose a biome</div>'+
     '<h2>Flight Plan</h2>'+
     '<div class="row" style="flex-direction:column;align-items:stretch;margin-top:18px">'+rows+'</div>'+
     toggleBlock("B")
   );
   card.querySelectorAll("button[data-lv]").forEach(function(b){
-    b.onclick=()=>loadLevel(parseInt(b.dataset.lv,10));
+    b.onclick=()=>enterLaunch(parseInt(b.dataset.lv,10));
   });
   wireToggles("B");
 }
@@ -1099,6 +1136,35 @@ function bindControls(){
   b.addEventListener("pointerdown",e=>{ e.preventDefault(); input.boost=true; });
   ["pointerup","pointercancel","pointerleave"].forEach(ev=>
     b.addEventListener(ev,()=>{ input.boost=false; }));
+
+  // Slingshot launch: drag anywhere on #launchZone (visible only in "launch" mode).
+  // Pulling down/back aims the climb angle, dragging sideways aims yaw, pull
+  // distance sets launch power — release fires releaseLaunch().
+  const lz=$("launchZone");
+  let lid=null, lox=0, loy=0;
+  lz.addEventListener("pointerdown",function(e){
+    if(lid!==null) return;
+    lid=e.pointerId; lox=e.clientX; loy=e.clientY;
+    lz.setPointerCapture(lid);
+    state.launchDragging=true;
+  });
+  lz.addEventListener("pointermove",function(e){
+    if(e.pointerId!==lid) return;
+    let dx=e.clientX-lox, dy=e.clientY-loy;
+    const d=Math.hypot(dx,dy);
+    if(d>LAUNCH_DRAG_R){ dx=dx/d*LAUNCH_DRAG_R; dy=dy/d*LAUNCH_DRAG_R; }
+    state.yaw=clamp((dx/LAUNCH_DRAG_R)*LAUNCH_YAW_MAX,-YAW_LIMIT,YAW_LIMIT);
+    state.pitch=clamp((dy/LAUNCH_DRAG_R)*LAUNCH_PITCH_MAX,-PITCH_LIMIT,PITCH_LIMIT);
+    state.launchPower=clamp(Math.hypot(dx,dy)/LAUNCH_DRAG_R,0,1);
+    state.launchDx=dx; state.launchDy=dy;
+  });
+  function launchEnd(e){
+    if(e.pointerId!==lid) return;
+    lid=null;
+    if(state.mode==="launch" && state.launchDragging) releaseLaunch();
+  }
+  lz.addEventListener("pointerup",launchEnd);
+  lz.addEventListener("pointercancel",launchEnd);
 
   window.addEventListener("keydown",e=>{
     input.keys[e.key]=true;
