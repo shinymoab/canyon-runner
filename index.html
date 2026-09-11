@@ -271,6 +271,11 @@ const LAUNCH_HEIGHT       = 24;    // m above the floor at the launch pad
 const OPEN_FLOOR_PAD      = 180;   // m of floor ribbon either side of the corridor, replaces the old canyon walls
 const RUN_BUILD_LENGTH    = 4000;  // m of terrain/obstacles generated per run regardless of biome unlock distance
 
+/* ---- coin economy ---- */
+const COIN_PER_METRE      = 0.1;   // 1 coin per 10m flown
+const COIN_FINISH_BONUS   = 1.25;  // multiplier applied when a run ends by reaching the target distance, not a crash
+const COINS_STORAGE_KEY   = "canyonRunner.coins";
+
 const SEG          = 4;
 
 /* ============================================================
@@ -292,9 +297,22 @@ const state = {
   bestDistance:new Array(LEVELS.length).fill(null),
   shake:0,
   launchDragging:false, launchPower:0, launchDx:0, launchDy:0,
+  coins:0, lastCoins:0,
   // PR3 prep: upgrade multipliers, applied at launch time — inert (1) until the upgrade shop lands
   dragMul:1, enginePowerMul:1, stallSpeedMul:1
 };
+
+// localStorage can throw (private browsing, quota, disabled) — never let a save/load
+// failure take down the game, coins just won't persist that session.
+function loadCoins(){
+  try{
+    const v=parseInt(localStorage.getItem(COINS_STORAGE_KEY),10);
+    return Number.isFinite(v) && v>=0 ? v : 0;
+  }catch(e){ return 0; }
+}
+function saveCoins(){
+  try{ localStorage.setItem(COINS_STORAGE_KEY,String(state.coins)); }catch(e){ /* ignore */ }
+}
 
 const input = { sx:0, sy:0, boost:false, keys:Object.create(null) };
 
@@ -662,6 +680,8 @@ function buildSky(L){
    INIT
    ============================================================ */
 function init(){
+  state.coins=loadCoins();
+
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(72,window.innerWidth/window.innerHeight,0.5,2400);
   renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});
@@ -947,11 +967,20 @@ function tick(){
 /* ============================================================
    EVENTS
    ============================================================ */
+// Coins are earned purely by distance flown this run, with a bonus for reaching the
+// target distance instead of crashing. Persisted immediately so a run always "banks".
+function awardCoins(clean){
+  state.lastCoins=Math.round(state.z*COIN_PER_METRE*(clean?COIN_FINISH_BONUS:1));
+  state.coins+=state.lastCoins;
+  saveCoins();
+}
+
 function crash(){
   if(state.mode!=="flying") return;
   state.mode="crashed"; state.crashes++; state.deathTimer=0; state.shake=1;
   const i=state.levelIndex;
   if(state.bestDistance[i]===null || state.z>state.bestDistance[i]) state.bestDistance[i]=state.z;
+  awardCoins(false);
   burst(state.x,state.y,state.z);
   plane.visible=false;
   showHUD(false);
@@ -966,6 +995,7 @@ function finishRun(){
   const i=state.levelIndex;
   if(state.unlocked<=i) state.unlocked=i+1;
   if(state.bestDistance[i]===null || state.z>state.bestDistance[i]) state.bestDistance[i]=state.z;
+  awardCoins(true);
   showHUD(false);
   showResults();
 }
@@ -1024,6 +1054,7 @@ function showTitle(){
     '<button id="btnStart">Choose a biome</button>'+
     toggleBlock("A")+
     pips()+
+    '<p class="body" style="margin-top:14px">'+state.coins+' coins banked</p>'+
     '<div class="row"><button class="ghost" id="btnShop" disabled>Hangar (coming soon)</button></div>'
   );
   $("btnStart").onclick=()=>showSelect();
@@ -1046,8 +1077,8 @@ function showResults(){
       '<div class="stat"><b>'+dist+'m</b><span>Distance</span></div>'+
       '<div class="stat"><b>'+best+'m</b><span>Best</span></div>'+
       '<div class="stat"><b>'+state.crashes+'</b><span>Wrecks</span></div>'+
-      // PR2 TODO: append a fourth .stat block here — coins earned = floor(distance/COIN_DISTANCE_DIVISOR), plus running total from state.coins
     '</div>'+
+    '<p class="body">+'+state.lastCoins+' coins earned · '+state.coins+' total</p>'+
     '<button id="btnRetry">Fly again</button>'+
     '<div class="row"><button class="ghost" id="btnMenu">Change biome</button></div>'
   );
